@@ -1,10 +1,7 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.03";
+const APP_VERSION = "1.04";
 const RELEASE_NOTES = [
-  "新增借用人欄位，送出前可再次確認負責同仁。",
-  "新增醫院智慧搜尋與正式名稱驗證，避免同一家醫院出現不同名稱。",
-  "放大儀器名稱、編號、類別與狀態文字，提升閱讀辨識度。",
-  "更新設計者署名。",
+  "修正 iPhone Safari 手機版借用日期欄位跑版問題。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 

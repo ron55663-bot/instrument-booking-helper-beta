@@ -427,6 +427,33 @@ input,
   color: var(--ink);
 }
 
+.date-field,
+.date-input-wrap,
+#borrow-date {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+#borrow-date {
+  display: block;
+  overflow: hidden;
+  text-align: left;
+}
+
+#borrow-date::-webkit-date-and-time-value {
+  min-width: 0;
+  text-align: left;
+}
+
+@supports (-webkit-touch-callout: none) {
+  #borrow-date {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 14px;
+  }
+}
+
 input:focus,
 select:focus,
 textarea:focus,
