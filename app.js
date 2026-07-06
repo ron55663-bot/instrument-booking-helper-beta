@@ -1,9 +1,32 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.02";
+const APP_VERSION = "1.03";
 const RELEASE_NOTES = [
-  "放大「排隊備取」與借用醫院文字，提升閱讀辨識度。",
+  "新增借用人欄位，送出前可再次確認負責同仁。",
+  "新增醫院智慧搜尋與正式名稱驗證，避免同一家醫院出現不同名稱。",
+  "放大儀器名稱、編號、類別與狀態文字，提升閱讀辨識度。",
+  "更新設計者署名。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
+
+const HOSPITAL_GROUPS = [
+  ["北區", [
+    "北辦", "北榮", "北榮動物實驗", "台大", "林長一科", "林長二科", "基長", "北醫", "三總", "北馬", "淡馬",
+    "竹馬", "亞東", "新光", "陽明", "竹北生醫", "新竹中國", "竹大", "萬芳", "土城", "花慈", "北慈",
+    "新慈", "國桃", "敏盛", "北國", "輔大", "竹中", "部北", "新耕", "雙和", "聖母",
+  ]],
+  ["中區", [
+    "中辦", "中榮", "中榮兒科", "中國醫", "中國兒科", "中國醫H棟", "亞大", "彰基", "員基", "中山", "署豐",
+    "大里仁愛", "長安", "彰秀", "濱秀", "雲林台大", "斗六成大", "部苗", "部南投", "光田", "老醫",
+    "埔榮", "嘉榮", "童綜合",
+  ]],
+  ["南區", [
+    "高辦", "南辦", "高長", "嘉長", "高醫", "高醫岡山", "大同", "成大", "奇美", "802", "高榮",
+    "屏榮", "屏基", "麻新", "嘉基", "高醫鳳山", "阮綜合", "東馬",
+  ]],
+];
+const HOSPITAL_OPTIONS = HOSPITAL_GROUPS.flatMap(([region, hospitals]) =>
+  hospitals.map((name) => ({ name, region }))
+);
 
 const INSTRUMENT_CATALOG = [
   ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1", "Enstie X校正箱"]],
@@ -32,7 +55,9 @@ const DEMO_INSTRUMENTS = INSTRUMENT_CATALOG.flatMap(([category, code, instrument
 const els = {
   form: document.querySelector("#booking-form"),
   date: document.querySelector("#borrow-date"),
+  borrower: document.querySelector("#borrower-name"),
   hospital: document.querySelector("#hospital-name"),
+  hospitalSuggestions: document.querySelector("#hospital-suggestions"),
   instrumentGroups: document.querySelector("#instrument-groups"),
   availabilityHint: document.querySelector("#availability-hint"),
   deliveryTime: document.querySelector("#delivery-time"),
@@ -67,6 +92,108 @@ let currentInstruments = [];
 let selectedInstrumentIds = new Set();
 let openCategory = "";
 let pendingPayload = null;
+let hospitalMatches = [];
+let hospitalSuggestionIndex = -1;
+
+function normalizeHospitalName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\s　·・,，.。()（）-]/g, "")
+    .toUpperCase();
+}
+
+function canonicalizeHospital(value) {
+  const normalized = normalizeHospitalName(value);
+  return HOSPITAL_OPTIONS.find((item) => normalizeHospitalName(item.name) === normalized)?.name || "";
+}
+
+function levenshteinDistance(left, right) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+
+function rankHospitals(query) {
+  const normalizedQuery = normalizeHospitalName(query);
+  if (!normalizedQuery) return [];
+  return HOSPITAL_OPTIONS
+    .map((item, originalIndex) => {
+      const normalizedName = normalizeHospitalName(item.name);
+      let score;
+      if (normalizedName === normalizedQuery) score = 0;
+      else if (normalizedName.startsWith(normalizedQuery)) score = 1 + (normalizedName.length - normalizedQuery.length) / 100;
+      else if (normalizedName.includes(normalizedQuery)) score = 2 + normalizedName.indexOf(normalizedQuery) / 100;
+      else score = 3 + levenshteinDistance(normalizedQuery, normalizedName) / Math.max(normalizedQuery.length, normalizedName.length);
+      return { ...item, score, originalIndex };
+    })
+    .sort((left, right) => left.score - right.score || left.originalIndex - right.originalIndex)
+    .slice(0, 8);
+}
+
+function hideHospitalSuggestions() {
+  els.hospitalSuggestions.hidden = true;
+  els.hospital.setAttribute("aria-expanded", "false");
+  els.hospital.removeAttribute("aria-activedescendant");
+  hospitalMatches = [];
+  hospitalSuggestionIndex = -1;
+}
+
+function renderHospitalSuggestions() {
+  hospitalMatches = rankHospitals(els.hospital.value);
+  hospitalSuggestionIndex = hospitalMatches.length ? 0 : -1;
+  if (!hospitalMatches.length) {
+    hideHospitalSuggestions();
+    return;
+  }
+  els.hospitalSuggestions.innerHTML = hospitalMatches
+    .map((item, index) => `
+      <button
+        id="hospital-option-${index}"
+        class="hospital-suggestion${index === hospitalSuggestionIndex ? " active" : ""}"
+        type="button"
+        role="option"
+        aria-selected="${index === hospitalSuggestionIndex}"
+        data-hospital="${escapeHtml(item.name)}"
+      >
+        <span>${escapeHtml(item.region)}</span>
+        <strong>${escapeHtml(item.name)}</strong>
+      </button>
+    `)
+    .join("");
+  els.hospitalSuggestions.hidden = false;
+  els.hospital.setAttribute("aria-expanded", "true");
+  els.hospital.setAttribute("aria-activedescendant", `hospital-option-${hospitalSuggestionIndex}`);
+}
+
+function selectHospital(name) {
+  const canonicalName = canonicalizeHospital(name);
+  if (!canonicalName) return;
+  els.hospital.value = canonicalName;
+  hideHospitalSuggestions();
+}
+
+function moveHospitalSuggestion(direction) {
+  if (!hospitalMatches.length) return;
+  hospitalSuggestionIndex = (hospitalSuggestionIndex + direction + hospitalMatches.length) % hospitalMatches.length;
+  const options = els.hospitalSuggestions.querySelectorAll(".hospital-suggestion");
+  options.forEach((option, index) => {
+    const active = index === hospitalSuggestionIndex;
+    option.classList.toggle("active", active);
+    option.setAttribute("aria-selected", String(active));
+  });
+  els.hospital.setAttribute("aria-activedescendant", `hospital-option-${hospitalSuggestionIndex}`);
+}
+
 function todayInTaipei() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
 }
@@ -250,7 +377,9 @@ async function handleDateChange() {
 
 function validateForm() {
   if (!els.date.value) return "請選擇借用日期。";
+  if (!els.borrower.value.trim()) return "請填寫借用人姓名。";
   if (!els.hospital.value.trim()) return "請填寫借用醫院名稱。";
+  if (!canonicalizeHospital(els.hospital.value)) return "請從建議清單選擇正式醫院名稱。";
   if (!selectedInstrumentIds.size) return "請至少選擇一台借用儀器。";
   if (!els.deliveryTime.value) return "請選擇送達時間。";
   if (!els.pickupTime.value) return "請選擇取回時間。";
@@ -268,7 +397,8 @@ function isHalfHourTime(value) {
 function buildPayload() {
   return {
     date: els.date.value,
-    hospital: els.hospital.value.trim(),
+    borrower: els.borrower.value.trim(),
+    hospital: canonicalizeHospital(els.hospital.value),
     instruments: currentInstruments
       .filter((item) => selectedInstrumentIds.has(item.id))
       .map(({ id, name, category, code, available }) => ({
@@ -317,6 +447,7 @@ function showReview(payload) {
 
   els.reviewSummary.innerHTML = `
     <div><dt>借用日期</dt><dd>${escapeHtml(formatDate(payload.date))}</dd></div>
+    <div><dt>借用人</dt><dd>${escapeHtml(payload.borrower)}</dd></div>
     <div><dt>借用醫院</dt><dd>${escapeHtml(payload.hospital)}</dd></div>
     <div><dt>借用時間</dt><dd>${escapeHtml(payload.deliveryTime)} 送達・${escapeHtml(payload.pickupTime)} 取回</dd></div>
     <div class="review-instruments"><dt>借用儀器</dt><dd><ul>${instrumentRows}</ul></dd></div>
@@ -372,6 +503,7 @@ function showSuccess(payload) {
   const waitlistCount = payload.instruments.length - bookingCount;
   els.successSummary.innerHTML = `
     <strong>${escapeHtml(payload.hospital)}</strong><br>
+    借用人：${escapeHtml(payload.borrower)}<br>
     ${escapeHtml(formatDate(payload.date))}・${escapeHtml(payload.deliveryTime)}－${escapeHtml(payload.pickupTime)}<br>
     ${bookingCount ? `直接借用 ${bookingCount} 台` : ""}${bookingCount && waitlistCount ? "・" : ""}${waitlistCount ? `排隊備取 ${waitlistCount} 台` : ""}
   `;
@@ -459,6 +591,28 @@ els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
   timeZone: "Asia/Taipei",
 }).format(new Date());
 els.date.addEventListener("change", handleDateChange);
+els.hospital.addEventListener("input", renderHospitalSuggestions);
+els.hospital.addEventListener("focus", () => {
+  if (els.hospital.value.trim()) renderHospitalSuggestions();
+});
+els.hospital.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (els.hospitalSuggestions.hidden) renderHospitalSuggestions();
+    else moveHospitalSuggestion(event.key === "ArrowDown" ? 1 : -1);
+  } else if (event.key === "Enter" && !els.hospitalSuggestions.hidden && hospitalSuggestionIndex >= 0) {
+    event.preventDefault();
+    selectHospital(hospitalMatches[hospitalSuggestionIndex].name);
+  } else if (event.key === "Escape") {
+    hideHospitalSuggestions();
+  }
+});
+els.hospitalSuggestions.addEventListener("mousedown", (event) => {
+  const option = event.target.closest(".hospital-suggestion");
+  if (!option) return;
+  event.preventDefault();
+  selectHospital(option.dataset.hospital);
+});
 els.chooseToday.addEventListener("click", () => {
   els.date.value = todayInTaipei();
   handleDateChange();
@@ -473,6 +627,7 @@ els.confirmBooking.addEventListener("click", confirmBooking);
 els.newBooking.addEventListener("click", resetForm);
 els.closeRelease.addEventListener("click", closeReleaseNotes);
 document.addEventListener("click", (event) => {
+  if (!event.target.closest(".hospital-field")) hideHospitalSuggestions();
   if (openCategory && !event.target.closest(".instrument-category")) {
     openCategory = "";
     renderInstrumentGroups(currentInstruments);

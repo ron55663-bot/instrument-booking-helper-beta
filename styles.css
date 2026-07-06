@@ -465,6 +465,51 @@ textarea::placeholder {
   font-size: 11px;
 }
 
+.hospital-suggestions {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  max-height: 280px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid #cbd5d0;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 14px 32px rgba(32, 61, 54, 0.2);
+}
+
+.hospital-suggestion {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  gap: 9px;
+  padding: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #253834;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hospital-suggestion:hover,
+.hospital-suggestion.active {
+  background: #eaf4f1;
+}
+
+.hospital-suggestion > span {
+  color: #247473;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hospital-suggestion > strong {
+  font-size: 15px;
+}
+
 .select-trigger {
   display: flex;
   align-items: center;
@@ -1111,13 +1156,13 @@ footer {
 
 .category-trigger-copy strong {
   color: #263b37;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .category-trigger-copy small {
-  margin-top: 2px;
+  margin-top: 3px;
   color: #8a9793;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .category-trigger > b {
@@ -1130,7 +1175,7 @@ footer {
   background: #16777a;
   color: white;
   font-family: "Outfit", sans-serif;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .category-trigger > svg {
@@ -1203,14 +1248,14 @@ footer {
 
 .booking-tag {
   color: #348161;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .missing-tag {
   color: #8d9894;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1218,7 +1263,7 @@ footer {
 .multi-instrument-option .availability-tag {
   max-width: 180px;
   color: #8a5708;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   line-height: 1.5;
   text-align: right;
@@ -1247,13 +1292,27 @@ footer {
 }
 
 .multi-instrument-option strong {
-  font-size: 11px;
+  font-size: 15px;
 }
 
 .multi-instrument-option small {
-  margin-top: 1px;
+  margin-top: 2px;
   color: #909b97;
-  font-size: 8px;
+  font-size: 12px;
+}
+
+.status-item strong {
+  font-size: 15px;
+}
+
+.status-item small {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.status-pill {
+  font-size: 12px;
+  font-weight: 700;
 }
 
 /* 送出前確認視窗 */

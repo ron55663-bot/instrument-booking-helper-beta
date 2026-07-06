@@ -14,6 +14,25 @@ const SPREADSHEET_ID = "1srzjbSmguIPuV8OAEZ-6NlKJJyRUe9o3nNpm9ZLWEXs";
 const SCHEDULE_SHEET_SUFFIX = "月行程表";
 const SCHEDULE_FIRST_DATE_COLUMN = 6; // F 欄
 const SCHEDULE_DATE_BLOCK_WIDTH = 6;
+const HOSPITAL_GROUPS = [
+  ["北區", [
+    "北辦", "北榮", "北榮動物實驗", "台大", "林長一科", "林長二科", "基長", "北醫", "三總", "北馬", "淡馬",
+    "竹馬", "亞東", "新光", "陽明", "竹北生醫", "新竹中國", "竹大", "萬芳", "土城", "花慈", "北慈",
+    "新慈", "國桃", "敏盛", "北國", "輔大", "竹中", "部北", "新耕", "雙和", "聖母",
+  ]],
+  ["中區", [
+    "中辦", "中榮", "中榮兒科", "中國醫", "中國兒科", "中國醫H棟", "亞大", "彰基", "員基", "中山", "署豐",
+    "大里仁愛", "長安", "彰秀", "濱秀", "雲林台大", "斗六成大", "部苗", "部南投", "光田", "老醫",
+    "埔榮", "嘉榮", "童綜合",
+  ]],
+  ["南區", [
+    "高辦", "南辦", "高長", "嘉長", "高醫", "高醫岡山", "大同", "成大", "奇美", "802", "高榮",
+    "屏榮", "屏基", "麻新", "嘉基", "高醫鳳山", "阮綜合", "東馬",
+  ]],
+];
+const HOSPITALS = HOSPITAL_GROUPS.reduce(function (all, group) {
+  return all.concat(group[1]);
+}, []);
 const INSTRUMENT_CATALOG = [
   ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1", "Enstie X校正箱"]],
   ["3D類別 P", "3DP", ["E1", "E2", "E3", "E4", "Enstie P校正箱"]],
@@ -43,6 +62,7 @@ function setupSheets() {
       "申請編號",
       "借用日期",
       "借用醫院",
+      "借用人",
       "系統識別碼",
       "儀器名稱",
       "儀器類別",
@@ -54,6 +74,7 @@ function setupSheets() {
     ]);
     bookings.setFrozenRows(1);
   }
+  ensureBookingsSheetSchema(bookings);
 
   if (instruments.getLastRow() === 0) {
     instruments.appendRow(["系統識別碼", "儀器編號", "分類", "畫面代碼", "啟用"]);
@@ -68,6 +89,22 @@ function setupSheets() {
       .setFontWeight("bold");
     sheet.autoResizeColumns(1, sheet.getLastColumn());
   });
+}
+
+function ensureBookingsSheetSchema(sheet) {
+  if (!sheet || sheet.getLastColumn() === 0) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  if (headers.indexOf("借用人") >= 0) return;
+
+  const hospitalColumn = headers.indexOf("借用醫院") + 1;
+  if (!hospitalColumn) throw new Error("借用紀錄缺少「借用醫院」欄位。");
+
+  sheet.insertColumnAfter(hospitalColumn);
+  sheet.getRange(1, hospitalColumn + 1)
+    .setValue("借用人")
+    .setBackground("#12372f")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold");
 }
 
 function getCatalogRows() {
@@ -128,7 +165,9 @@ function doPost(e) {
 
     const bookingId = Utilities.getUuid().slice(0, 8).toUpperCase();
     const sheet = getRequiredSheet(BOOKINGS_SHEET);
-    const hospital = sanitizeText(data.hospital, 100);
+    ensureBookingsSheetSchema(sheet);
+    const hospital = canonicalizeHospital(data.hospital);
+    const borrower = sanitizeText(data.borrower, 50);
     const notes = sanitizeText(data.notes || "", 500);
     const submittedAt = new Date();
     let bookingCount = 0;
@@ -152,6 +191,7 @@ function doPost(e) {
         bookingId,
         data.date,
         hospital,
+        borrower,
         instrument.id,
         instrument.name,
         instrument.category,
@@ -365,7 +405,8 @@ function columnToA1(column) {
 function validateBooking(data) {
   if (!data) throw new Error("未收到借用資料。");
   assertValidDate(data.date);
-  if (!sanitizeText(data.hospital, 100)) throw new Error("請填寫借用醫院名稱。");
+  if (!sanitizeText(data.borrower, 50)) throw new Error("請填寫借用人姓名。");
+  if (!canonicalizeHospital(data.hospital)) throw new Error("請從正式清單選擇借用醫院。");
   if (!Array.isArray(data.instruments) || !data.instruments.length) {
     throw new Error("請至少選擇一台借用儀器。");
   }
@@ -379,6 +420,21 @@ function validateBooking(data) {
   }
   if (!isTime(data.deliveryTime) || !isTime(data.pickupTime)) throw new Error("時間格式不正確。");
   if (data.pickupTime <= data.deliveryTime) throw new Error("取回時間必須晚於送達時間。");
+}
+
+function normalizeHospitalName(value) {
+  return sanitizeText(value, 100)
+    .normalize("NFKC")
+    .replace(/[\s　·・,，.。()（）-]/g, "")
+    .toUpperCase();
+}
+
+function canonicalizeHospital(value) {
+  const normalized = normalizeHospitalName(value);
+  for (let index = 0; index < HOSPITALS.length; index += 1) {
+    if (normalizeHospitalName(HOSPITALS[index]) === normalized) return HOSPITALS[index];
+  }
+  return "";
 }
 
 function assertValidDate(date) {
