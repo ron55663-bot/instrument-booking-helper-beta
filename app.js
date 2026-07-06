@@ -1,9 +1,7 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.01";
+const APP_VERSION = "1.02";
 const RELEASE_NOTES = [
-  "新增版本更新內容彈窗，每個版本只顯示一次。",
-  "正式串接 Google 試算表，即時同步儀器借用狀態。",
-  "優化手機版單欄操作介面與頁尾版本資訊。",
+  "放大「排隊備取」與借用醫院文字，提升閱讀辨識度。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 
