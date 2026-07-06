@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#12372f" />
+    <meta name="application-name" content="儀器借用小幫手" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="儀器借用" />
+    <title>儀器借用幫手</title>
+    <link rel="icon" type="image/png" href="assets/app-icon-beta.png" />
+    <link rel="apple-touch-icon" href="assets/app-icon-beta.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=20260706-4" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="儀器借用工作台首頁">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="assets/app-icon-beta.png" alt="" />
+          </span>
+          <span>
+            <small>設備物流調度</small>
+            <strong>儀器借用工作台 <em class="beta-badge">Beta測試版</em></strong>
+          </span>
+        </a>
+          <div class="date-now">
+            <span id="today-label"></span>
+            <b><i></i> 系統連線正常</b>
+          </div>
+      </header>
+
+      <nav class="page-tabs" aria-label="工作台功能">
+        <a class="active" href="#booking-form">儀器借用申請</a>
+        <a href="#status-panel">借用排程總覽</a>
+      </nav>
+
+      <div class="workspace">
+        <main>
+          <section class="hero">
+          <div>
+            <h1>儀器借用申請</h1>
+            <p class="hero-copy">選擇借用日期與儀器，系統將自動檢查當日可借狀態。</p>
+          </div>
+          <button class="today-button" type="button" id="choose-today">回到今天</button>
+          </section>
+
+          <div class="content-grid">
+          <section class="booking-card" aria-labelledby="form-title">
+          <div class="card-heading">
+            <span class="step-badge">01</span>
+            <div>
+              <p>NEW REQUEST</p>
+              <h2 id="form-title">新增借用申請</h2>
+            </div>
+          </div>
+
+          <form id="booking-form" novalidate>
+            <div class="form-grid">
+              <label class="field">
+                <span class="field-label">借用日期 <b>必填</b></span>
+                <span class="input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" />
+                  </svg>
+                  <input id="borrow-date" name="date" type="date" required />
+                </span>
+                <small class="field-hint">選擇日期後，系統會自動更新可借儀器。</small>
+              </label>
+
+              <label class="field">
+                <span class="field-label">借用醫院 <b>必填</b></span>
+                <span class="input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 21V5h10v16M14 9h6v12M8 9h2M8 13h2M8 17h2M17 13h1M17 17h1" />
+                  </svg>
+                  <input id="hospital-name" name="hospital" type="text" maxlength="100" placeholder="請輸入醫院名稱" required />
+                </span>
+                <small class="field-hint">請填寫儀器送達的醫院名稱。</small>
+              </label>
+
+              <fieldset class="field field-wide instrument-field">
+                <legend class="field-label">借用儀器 <b>可複選・必填</b></legend>
+                <div id="instrument-groups" class="instrument-groups">
+                  <div class="instrument-groups-placeholder">請先選擇借用日期</div>
+                </div>
+                <small id="availability-hint" class="field-hint">每個類別皆可複選；已借用的儀器仍可點選排隊備取。</small>
+              </fieldset>
+
+              <label class="field">
+                <span class="field-label">送達時間 <b>必填</b></span>
+                <span class="input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                  <select id="delivery-time" class="time-select" name="deliveryTime" required>
+                    <option value="">請選擇時間</option>
+                  </select>
+                </span>
+                <small class="field-hint">每 30 分鐘一格，使用 24 小時制。</small>
+              </label>
+
+              <label class="field">
+                <span class="field-label">取回時間 <b>必填</b></span>
+                <span class="input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                  <select id="pickup-time" class="time-select" name="pickupTime" required>
+                    <option value="">請選擇時間</option>
+                  </select>
+                </span>
+                <small class="field-hint">使用 00:00–23:30 的 24 小時格式。</small>
+              </label>
+
+              <label class="field field-wide">
+                <span class="field-label">備註／手術內容 <span>選填</span></span>
+                <textarea
+                  id="notes"
+                  name="notes"
+                  rows="4"
+                  maxlength="500"
+                  placeholder="例：AF使用，前一天抵達。"
+                ></textarea>
+                <small class="char-count"><span id="notes-count">0</span> / 500</small>
+              </label>
+            </div>
+
+            <div id="form-error" class="form-message error" role="alert" hidden></div>
+
+            <div class="form-footer">
+              <p>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3 4 6v6c0 4.6 3.1 7.5 8 9 4.9-1.5 8-4.4 8-9V6l-8-3Z" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+                送出後將同步至儀器借用紀錄
+              </p>
+              <button class="submit-button" type="submit">
+                <span>檢查借用內容</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h14M14 7l5 5-5 5" />
+                </svg>
+              </button>
+            </div>
+          </form>
+          </section>
+
+          <aside id="status-panel" class="status-panel">
+            <div class="panel-heading">
+              <div>
+                <p>DAILY STATUS</p>
+                <h2>當日儀器狀態</h2>
+              </div>
+              <span id="status-date">請選擇日期</span>
+            </div>
+            <div class="status-summary">
+              <div><span class="summary-dot available"></span><strong id="available-count">—</strong><small>可借用</small></div>
+              <div><span class="summary-dot booked"></span><strong id="booked-count">—</strong><small>已借用</small></div>
+            </div>
+            <div id="status-list" class="status-list">
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
+                <p>從上方選擇日期<br />查看儀器排程</p>
+              </div>
+            </div>
+            <p class="status-note"><i></i> 狀態會依 Google 試算表資料即時更新</p>
+          </aside>
+          </div>
+        </main>
+      </div>
+      <footer id="help">
+        <span class="footer-credit">Designed by Ron. <b class="footer-version">V1.01</b></span>
+        <span class="footer-sync">資料同步至 Google 試算表</span>
+      </footer>
+    </div>
+
+    <div id="release-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="release-title" hidden>
+      <div class="review-modal release-modal">
+        <div class="review-heading">
+          <div>
+            <p>WHAT'S NEW・<span id="release-version">V1.01</span></p>
+            <h2 id="release-title">版本更新內容</h2>
+          </div>
+        </div>
+        <p class="review-intro">歡迎使用新版儀器借用幫手，本次更新內容如下：</p>
+        <ul id="release-notes" class="release-notes"></ul>
+        <div class="release-actions">
+          <button id="close-release-button" class="confirm-button" type="button">我知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="review-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="review-title" hidden>
+      <div class="review-modal">
+        <div class="review-heading">
+          <div>
+            <p>CONFIRM REQUEST</p>
+            <h2 id="review-title">確認借用資訊</h2>
+          </div>
+          <button id="close-review-button" class="modal-close" type="button" aria-label="關閉確認視窗">×</button>
+        </div>
+        <p class="review-intro">請確認以下內容正確，按下「確定送出」後才會完成申請。</p>
+        <dl id="review-summary" class="review-summary"></dl>
+        <div id="review-error" class="form-message error" role="alert" hidden></div>
+        <div class="review-actions">
+          <button id="edit-booking-button" class="secondary-button" type="button">返回修改</button>
+          <button id="confirm-booking-button" class="confirm-button" type="button">確定送出</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="success-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title" hidden>
+      <div class="success-modal">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8" /></svg>
+        </div>
+        <p>REQUEST RECEIVED</p>
+        <h2 id="success-title">借用申請已送出</h2>
+        <div id="success-summary" class="success-summary"></div>
+        <button id="new-booking-button" type="button">再新增一筆</button>
+      </div>
+    </div>
+
+    <script src="config.js?v=20260706-1"></script>
+    <script src="app.js?v=20260706-3"></script>
+  </body>
+</html>
