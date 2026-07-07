@@ -1,8 +1,8 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.06";
+const APP_VERSION = "1.07";
 const RELEASE_NOTES = [
+  "手機操作優先，強制改為手機友善單欄版面。",
   "儀器名稱新增區域劃分標示，例如 EX2（北）、EX1（中南）。",
-  "保留 Apps Script 公司帳號登入版部署支援。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 
