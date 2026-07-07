@@ -7,24 +7,20 @@
     <meta name="application-name" content="儀器借用小幫手" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="儀器借用" />
-    <title>儀器借用幫手</title>
-    <link rel="icon" type="image/png" href="assets/app-icon-beta.png" />
-    <link rel="apple-touch-icon" href="assets/app-icon-beta.png" />
-    <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <title>儀器借用幫手</title>    <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=1.06" />
+    <?!= include("Styles"); ?>
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="#" aria-label="儀器借用工作台首頁">
           <span class="brand-mark" aria-hidden="true">
-            <img src="assets/app-icon-beta.png" alt="" />
+            <span class="brand-fallback-icon" aria-hidden="true">β</span>
           </span>
           <span>
             <small>設備物流調度</small>
@@ -255,8 +251,14 @@
         <button id="new-booking-button" type="button">再新增一筆</button>
       </div>
     </div>
-
-    <script src="config.js?v=20260706-1"></script>
-    <script src="app.js?v=1.06"></script>
+    <script>
+      window.APP_CONFIG = {
+        googleAppsScriptUrl: "<?= getWebAppUrl() ?>",
+        useCurrentUrlApi: true,
+        demoMode: false,
+        userEmail: "<?= getActiveUserEmail() ?>"
+      };
+    </script>
+    <?!= include("Script"); ?>
   </body>
 </html>

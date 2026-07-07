@@ -4,8 +4,11 @@
  * 使用方式：
  * 1. 在目標 Google 試算表中開啟「擴充功能 → Apps Script」
  * 2. 將此檔案完整貼入 Code.gs
- * 3. 執行 setupSheets() 一次
- * 4. 部署為網路應用程式（執行身分：自己；存取權：所有人）
+ * 3. 另外新增 Index、Styles、Script 三個 HTML 檔，貼上同資料夾內對應內容
+ * 4. 執行 setupSheets() 一次
+ * 5. 若要限制公司帳號登入後使用：
+ *    部署為網路應用程式（執行身分：自己；存取權：網域內任何人）
+ *    若測試帳號不在公司網域，可暫時改成「任何擁有連結的人」測試。
  */
 
 const BOOKINGS_SHEET = "借用紀錄";
@@ -48,6 +51,75 @@ const INSTRUMENT_CATALOG = [
   ["刺激器螢幕", "T", ["T1", "T2", "T3", "T4", "T5"]],
   ["其他", "OT", ["WetLab-1", "Splitter +螢幕", "CathLink(C1)", "CathLink(C2)"]],
 ];
+const INSTRUMENT_REGIONS = {
+  "3DX-EX2": "北",
+  "3DX-EX3": "北",
+  "3DX-EX4": "北",
+  "3DX-EX1": "中南",
+  "3DX-Enstie X校正箱": "北",
+  "3DP-E1": "北",
+  "3DP-E2": "北",
+  "3DP-E3": "中南",
+  "3DP-E4": "中南",
+  "3DP-Enstie P校正箱": "北",
+  "ICE-ICE-H": "北",
+  "ICE-ICE-H-2": "北",
+  "ICE-ICE-H-3": "北",
+  "ICE-ICE(CX50)-1": "北",
+  "ICE-ICE(CX50)-2": "北",
+  "ICE-ICE-TS": "北",
+  "WMC-WMC-2": "北",
+  "WMC-Claris校正包": "北",
+  "LM-LM2": "北",
+  "LM-LM3": "北",
+  "LM-LM1": "北",
+  "A-A1": "北",
+  "A-A4": "北",
+  "A-A5": "北",
+  "A-A6(無Remote)": "北",
+  "A-A2": "中南",
+  "A-A7": "中南",
+  "P-P1": "北",
+  "P-P2": "北",
+  "P-P5": "北",
+  "P-P3": "中南",
+  "P-P4": "中南",
+  "CF-33921": "北",
+  "CF-34244": "北",
+  "CF-36614": "北",
+  "CF-36814": "中南",
+  "CF-34478": "中南",
+  "CF-36503": "中南",
+  "RC-RG1": "北",
+  "RC-RG2": "北",
+  "RC-RG4": "北",
+  "RC-RB1": "北",
+  "RC-RB4": "北",
+  "RC-RW1": "北",
+  "RC-RW3": "北",
+  "RC-RW4": "北",
+  "RC-RG3": "中南",
+  "RC-RB2": "中南",
+  "RC-RB3": "中南",
+  "RC-RS1": "中南",
+  "ST-ST2": "北",
+  "ST-ST": "中南",
+  "EP4-EP1": "北",
+  "EP4-EP2": "北",
+  "EP4-EP3": "北",
+  "EP4-EP4": "北",
+  "EP4-EP5": "北",
+  "EP4-EP6": "北",
+  "T-T1": "備機",
+  "T-T2": "備機",
+  "T-T3": "備機",
+  "T-T4": "備機",
+  "T-T5": "備機",
+  "OT-WetLab-1": "北",
+  "OT-Splitter +螢幕": "備機",
+  "OT-CathLink(C1)": "備機",
+  "OT-CathLink(C2)": "備機",
+};
 
 function setupSheets() {
   const spreadsheet = getSpreadsheet();
@@ -77,10 +149,11 @@ function setupSheets() {
   ensureBookingsSheetSchema(bookings);
 
   if (instruments.getLastRow() === 0) {
-    instruments.appendRow(["系統識別碼", "儀器編號", "分類", "畫面代碼", "啟用"]);
+    instruments.appendRow(["系統識別碼", "儀器編號", "分類", "畫面代碼", "啟用", "區域劃分"]);
     getCatalogRows().forEach((row) => instruments.appendRow(row));
     instruments.setFrozenRows(1);
   }
+  ensureInstrumentsSheetSchema(instruments);
 
   [bookings, instruments].forEach((sheet) => {
     sheet.getRange(1, 1, 1, sheet.getLastColumn())
@@ -107,6 +180,31 @@ function ensureBookingsSheetSchema(sheet) {
     .setFontWeight("bold");
 }
 
+function ensureInstrumentsSheetSchema(sheet) {
+  if (!sheet || sheet.getLastColumn() === 0) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  let regionColumn = headers.indexOf("區域劃分") + 1;
+
+  if (!regionColumn) {
+    sheet.insertColumnAfter(sheet.getLastColumn());
+    regionColumn = sheet.getLastColumn();
+    sheet.getRange(1, regionColumn)
+      .setValue("區域劃分")
+      .setBackground("#12372f")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold");
+  }
+
+  const idColumn = headers.indexOf("系統識別碼") + 1;
+  if (!idColumn || sheet.getLastRow() < 2) return;
+
+  const ids = sheet.getRange(2, idColumn, sheet.getLastRow() - 1, 1).getDisplayValues();
+  const regions = ids.map(function (row) {
+    return [INSTRUMENT_REGIONS[row[0]] || ""];
+  });
+  sheet.getRange(2, regionColumn, regions.length, 1).setValues(regions);
+}
+
 function getCatalogRows() {
   const rows = [];
   INSTRUMENT_CATALOG.forEach((group) => {
@@ -118,6 +216,7 @@ function getCatalogRows() {
       category,
       code,
       true,
+      INSTRUMENT_REGIONS[code + "-" + name] || "",
     ]));
   });
   return rows;
@@ -126,7 +225,11 @@ function getCatalogRows() {
 function doGet(e) {
   try {
     if (!e || !e.parameter || e.parameter.action !== "availability") {
-      return jsonResponse({ success: true, message: "儀器借用幫手 API 運作中" });
+      return HtmlService
+        .createTemplateFromFile("Index")
+        .evaluate()
+        .setTitle("儀器借用幫手 Beta測試版")
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     }
 
     const date = sanitizeText(e.parameter.date, 10);
@@ -138,6 +241,18 @@ function doGet(e) {
   } catch (error) {
     return jsonResponse({ success: false, message: error.message });
   }
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+function getWebAppUrl() {
+  return ScriptApp.getService().getUrl() || "";
+}
+
+function getActiveUserEmail() {
+  return Session.getActiveUser().getEmail() || "";
 }
 
 function doPost(e) {
@@ -220,7 +335,11 @@ function doPost(e) {
 function getAvailability(date) {
   const instrumentSheet = getRequiredSheet(INSTRUMENTS_SHEET);
   const bookingSheet = getRequiredSheet(BOOKINGS_SHEET);
-  const instrumentRows = instrumentSheet.getDataRange().getValues().slice(1);
+  ensureInstrumentsSheetSchema(instrumentSheet);
+  const instrumentValues = instrumentSheet.getDataRange().getValues();
+  const instrumentHeaders = instrumentValues[0] || [];
+  const instrumentRows = instrumentValues.slice(1);
+  const regionIndex = instrumentHeaders.indexOf("區域劃分");
   const schedule = getScheduleContext(date);
   const scheduleLastRow = schedule.sheet.getLastRow();
   const fixedRows = schedule.sheet.getRange(1, 1, scheduleLastRow, 5).getDisplayValues();
@@ -265,6 +384,7 @@ function getAvailability(date) {
         name: name,
         category: String(row[2] || "儀器設備"),
         code: String(row[3] || "EQ"),
+        region: regionIndex >= 0 ? String(row[regionIndex] || "") : (INSTRUMENT_REGIONS[id] || ""),
         available: !scheduleMissing && !borrowedHospital,
         waitlistCount: Math.max(waitlistCounts[id] || 0, scheduleWaitlistCount),
         borrowedHospital: borrowedHospital,
