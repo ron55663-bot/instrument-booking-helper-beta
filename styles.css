@@ -1273,6 +1273,11 @@ footer {
   cursor: not-allowed;
 }
 
+.multi-instrument-option.unauthorized-option {
+  background: #f3f4f3;
+  color: #8c9793;
+}
+
 .booking-tag {
   color: #348161;
   font-size: 12px;
@@ -1847,6 +1852,123 @@ input,
   overflow: hidden;
 }
 
+.my-panel {
+  grid-column: 1 / -1;
+  border: 1px solid #cfd5d1;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mini-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #cfd7d3;
+  border-radius: 7px;
+  background: #f8faf7;
+  color: #176d6c;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px;
+  padding: 13px;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  background: #f8fbf9;
+}
+
+.profile-card strong,
+.profile-card small {
+  display: block;
+}
+
+.profile-card strong {
+  color: #243a35;
+  font-size: 15px;
+}
+
+.profile-card small {
+  margin-top: 3px;
+  color: #758681;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.my-bookings-list {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.my-booking-card {
+  display: grid;
+  gap: 8px;
+  padding: 13px;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.my-booking-head,
+.my-booking-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.my-booking-card p {
+  margin: 0;
+  color: #263b36;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.my-booking-card small,
+.my-booking-actions span {
+  color: #6f817b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-chip.booked {
+  background: #e5f3ee;
+  color: #21795d;
+}
+
+.status-chip.waitlist {
+  background: #fff0cf;
+  color: #946411;
+}
+
+.status-chip.canceling {
+  background: #fff0ed;
+  color: #ad493c;
+}
+
+.cancel-booking-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+
 .panel-heading > span {
   border-radius: 5px;
 }
@@ -1944,7 +2066,7 @@ footer .footer-sync {
   }
 }
 
-/* V1.07：手機操作優先。Apps Script / Google 登入容器有時會回報較寬的視窗，
+/* V1.08：手機滿版優先。Apps Script / Google 登入容器有時會回報較寬的視窗，
    因此這裡不再依賴 max-width 才切手機版，而是預設採用手機友善單欄。 */
 html,
 body {
@@ -1955,9 +2077,10 @@ body {
 
 .app-shell {
   display: block;
-  width: min(100% - 20px, 580px);
-  max-width: 580px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
+  padding: 0 10px;
 }
 
 .topbar {
