@@ -1,9 +1,16 @@
 <script>
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.07";
+const APP_VERSION = "1.1.6-beta";
+const APP_VERSION_LABEL = "V1.1.6 Beta";
 const RELEASE_NOTES = [
-  "手機操作優先，強制改為手機友善單欄版面。",
-  "儀器名稱新增區域劃分標示，例如 EX2（北）、EX1（中南）。",
+  "修正取消借用後月行程表未同步釋出的問題。",
+  "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
+  "修正取消流程讀取錯誤的儀器欄位，並可修復舊版未釋出的排程。",
+  "取消已預約儀器時，系統會依申請順序自動遞補第一順位備取。",
+  "修正 Apps Script 公司登入版讀取登入帳號與我的借用失敗問題。",
+  "新增「我的儀器」測試頁，可查看自己的借用與備取紀錄。",
+  "新增取消借用測試流程：取消後同步釋出月行程表。",
+  "新增人員權限表雛形，可限制特定帳號可借醫院、區域與儀器類別。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 
@@ -154,6 +161,10 @@ const els = {
   availableCount: document.querySelector("#available-count"),
   bookedCount: document.querySelector("#booked-count"),
   statusList: document.querySelector("#status-list"),
+  profileEmail: document.querySelector("#profile-email"),
+  profilePermission: document.querySelector("#profile-permission"),
+  myBookingsList: document.querySelector("#my-bookings-list"),
+  refreshMyBookings: document.querySelector("#refresh-my-bookings"),
   footerVersion: document.querySelector(".footer-version"),
   releaseModal: document.querySelector("#release-modal"),
   releaseVersion: document.querySelector("#release-version"),
@@ -167,6 +178,7 @@ let openCategory = "";
 let pendingPayload = null;
 let hospitalMatches = [];
 let hospitalSuggestionIndex = -1;
+let currentProfile = null;
 
 function normalizeHospitalName(value) {
   return String(value || "")
@@ -183,6 +195,21 @@ function canonicalizeHospital(value) {
 function getInstrumentLabel(instrument) {
   const region = instrument.region || INSTRUMENT_REGIONS[instrument.id] || "";
   return region ? `${instrument.name}（${region}）` : instrument.name;
+}
+
+function isAllowedValue(value, allowedValues = ["*"]) {
+  return allowedValues.includes("*") || allowedValues.includes(value);
+}
+
+function canUseHospital(name) {
+  if (!currentProfile || currentProfile.unrestricted || currentProfile.isAdmin) return true;
+  return isAllowedValue(name, currentProfile.hospitals);
+}
+
+function canUseInstrument(instrument) {
+  if (!currentProfile || currentProfile.unrestricted || currentProfile.isAdmin) return true;
+  const region = instrument.region || INSTRUMENT_REGIONS[instrument.id] || "";
+  return isAllowedValue(region, currentProfile.regions) && isAllowedValue(instrument.category, currentProfile.categories);
 }
 
 function levenshteinDistance(left, right) {
@@ -205,6 +232,7 @@ function rankHospitals(query) {
   const normalizedQuery = normalizeHospitalName(query);
   if (!normalizedQuery) return [];
   return HOSPITAL_OPTIONS
+    .filter((item) => canUseHospital(item.name))
     .map((item, originalIndex) => {
       const normalizedName = normalizeHospitalName(item.name);
       let score;
@@ -302,6 +330,82 @@ function isDemoMode() {
   return CONFIG.demoMode || !getApiBaseUrl();
 }
 
+function canUseGoogleScriptRun() {
+  return Boolean(window.google && google.script && google.script.run);
+}
+
+function runServer(functionName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler((error) => reject(new Error(error && error.message ? error.message : "Apps Script 執行失敗")))
+      [functionName](...args);
+  });
+}
+
+async function fetchProfile() {
+  if (isDemoMode()) {
+    return {
+      email: CONFIG.userEmail || "demo@silverbell.com.tw",
+      isAdmin: true,
+      unrestricted: true,
+      hospitals: ["*"],
+      regions: ["*"],
+      categories: ["*"],
+    };
+  }
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiGetProfile");
+    if (!result.success) throw new Error(result.message || "無法取得登入資訊");
+    return result.profile;
+  }
+  const url = getApiBaseUrl();
+  url.searchParams.set("action", "profile");
+  const response = await fetch(url);
+  const result = await response.json();
+  if (!response.ok || !result.success) throw new Error(result.message || "無法取得登入資訊");
+  return result.profile;
+}
+
+async function fetchMyBookings() {
+  if (isDemoMode()) return [];
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiGetMyBookings");
+    if (!result.success) throw new Error(result.message || "無法取得我的借用");
+    return result.bookings || [];
+  }
+  const url = getApiBaseUrl();
+  url.searchParams.set("action", "myBookings");
+  const response = await fetch(url);
+  const result = await response.json();
+  if (!response.ok || !result.success) throw new Error(result.message || "無法取得我的借用");
+  return result.bookings || [];
+}
+
+async function requestCancelBooking(bookingId) {
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiCancelBooking", {
+      action: "cancel",
+      bookingId,
+      reason: "使用者於我的儀器頁面申請取消",
+    });
+    if (!result.success) throw new Error(result.message || "取消申請失敗");
+    return result;
+  }
+  const response = await fetch(getApiBaseUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      action: "cancel",
+      bookingId,
+      reason: "使用者於我的儀器頁面申請取消",
+    }),
+  });
+  const result = await response.json();
+  if (!result.success) throw new Error(result.message || "取消申請失敗");
+  return result;
+}
+
 function getDemoInstruments() {
   return DEMO_INSTRUMENTS.map((instrument) => ({
     ...instrument,
@@ -332,6 +436,12 @@ async function fetchAvailability(date) {
   if (isDemoMode()) {
     await new Promise((resolve) => setTimeout(resolve, 220));
     return getDemoInstruments(date);
+  }
+
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiGetAvailability", date);
+    if (!result.success) throw new Error(result.message || "目前無法取得儀器狀態");
+    return result.instruments;
   }
 
   const url = getApiBaseUrl();
@@ -388,17 +498,20 @@ function renderInstrumentGroups(instruments) {
 
       items.forEach((instrument) => {
         const isSelected = selectedInstrumentIds.has(instrument.id);
+        const canSelect = canUseInstrument(instrument);
         const option = document.createElement("button");
         option.type = "button";
-        option.className = `multi-instrument-option${isSelected ? " selected" : ""}${instrument.available || instrument.scheduleMissing ? "" : " waitlist-option"}`;
+        option.className = `multi-instrument-option${isSelected ? " selected" : ""}${instrument.available || instrument.scheduleMissing ? "" : " waitlist-option"}${canSelect ? "" : " unauthorized-option"}`;
         option.dataset.id = instrument.id;
-        option.disabled = Boolean(instrument.scheduleMissing);
+        option.disabled = Boolean(instrument.scheduleMissing || !canSelect);
         option.setAttribute("role", "option");
         option.setAttribute("aria-selected", String(isSelected));
         option.innerHTML = `
           <span class="option-check">${isSelected ? "✓" : ""}</span>
           <span><strong>${escapeHtml(getInstrumentLabel(instrument))}</strong><small>儀器編號</small></span>
-          ${instrument.scheduleMissing
+          ${!canSelect
+            ? '<span class="missing-tag">無權限</span>'
+            : instrument.scheduleMissing
             ? '<span class="missing-tag">試算表未對應</span>'
             : instrument.available
             ? '<span class="booking-tag">可借</span>'
@@ -466,8 +579,13 @@ function validateForm() {
   if (!els.date.value) return "請選擇借用日期。";
   if (!els.borrower.value.trim()) return "請填寫借用人姓名。";
   if (!els.hospital.value.trim()) return "請填寫借用醫院名稱。";
-  if (!canonicalizeHospital(els.hospital.value)) return "請從建議清單選擇正式醫院名稱。";
+  const hospital = canonicalizeHospital(els.hospital.value);
+  if (!hospital) return "請從建議清單選擇正式醫院名稱。";
+  if (!canUseHospital(hospital)) return "你的帳號目前沒有借用這家醫院的權限。";
   if (!selectedInstrumentIds.size) return "請至少選擇一台借用儀器。";
+  if (currentInstruments.some((item) => selectedInstrumentIds.has(item.id) && !canUseInstrument(item))) {
+    return "你選到未授權的儀器，請重新選擇。";
+  }
   if (!els.deliveryTime.value) return "請選擇送達時間。";
   if (!els.pickupTime.value) return "請選擇取回時間。";
   if (!isHalfHourTime(els.deliveryTime.value) || !isHalfHourTime(els.pickupTime.value)) {
@@ -557,6 +675,12 @@ async function submitBooking(payload) {
     return { success: true, bookingId: `DEMO-${Date.now()}` };
   }
 
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiSubmitBooking", payload);
+    if (!result.success) throw new Error(result.message || "送出失敗，請稍後再試");
+    return result;
+  }
+
   const response = await fetch(getApiBaseUrl(), {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -597,6 +721,7 @@ function showSuccess(payload) {
   `;
   els.successModal.hidden = false;
   els.newBooking.focus();
+  loadMyBookings();
 }
 
 function resetForm() {
@@ -633,7 +758,7 @@ function clearError() {
 }
 
 function showReleaseNotesOnce() {
-  const versionLabel = `V${APP_VERSION}`;
+  const versionLabel = APP_VERSION_LABEL;
   const forcePreview = new URLSearchParams(window.location.search).get("previewRelease") === "1";
   els.footerVersion.textContent = versionLabel;
   els.releaseVersion.textContent = versionLabel;
@@ -652,6 +777,103 @@ function showReleaseNotesOnce() {
   if (!hasSeenVersion || forcePreview) {
     els.releaseModal.hidden = false;
     els.closeRelease.focus();
+  }
+}
+
+function renderProfile(profile) {
+  currentProfile = profile;
+  if (!els.profileEmail) return;
+  els.profileEmail.textContent = profile.email || "未取得公司帳號";
+  if (profile.isAdmin) {
+    els.profilePermission.textContent = "管理者權限：可查看全部借用。";
+  } else if (profile.unrestricted || (profile.hospitals || []).includes("*")) {
+    els.profilePermission.textContent = "測試版目前全部開放；填寫人員權限表後會依帳號限制。";
+  } else {
+    els.profilePermission.textContent = `可借醫院 ${profile.hospitals.length} 項・區域：${profile.regions.join("、")}。`;
+  }
+}
+
+function groupBookings(bookings) {
+  const groups = new Map();
+  bookings.forEach((booking) => {
+    if (!groups.has(booking.bookingId)) {
+      groups.set(booking.bookingId, { ...booking, instruments: [] });
+    }
+    groups.get(booking.bookingId).instruments.push(booking);
+  });
+  return Array.from(groups.values());
+}
+
+function renderMyBookings(bookings) {
+  if (!els.myBookingsList) return;
+  const groups = groupBookings(bookings);
+  if (!groups.length) {
+    els.myBookingsList.innerHTML = `
+      <div class="empty-state compact">
+        <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
+        <p>目前沒有你的借用紀錄</p>
+      </div>
+    `;
+    return;
+  }
+  els.myBookingsList.innerHTML = groups.map((group) => {
+    const canCancel = !["申請取消", "已取消"].includes(group.status);
+    const statusClass = group.status === "備取中" ? "waitlist" : group.status === "申請取消" ? "canceling" : "booked";
+    const instruments = group.instruments
+      .map((item) => `${escapeHtml(item.instrumentName)}${item.status === "備取中" ? "（備取）" : ""}`)
+      .join("、");
+    return `
+      <article class="my-booking-card">
+        <div class="my-booking-head">
+          <span class="status-chip ${statusClass}">${escapeHtml(group.status || "未知")}</span>
+          <strong>${escapeHtml(formatDate(group.date))}</strong>
+        </div>
+        <p>${escapeHtml(group.hospital)}・${escapeHtml(group.deliveryTime)} 送達 / ${escapeHtml(group.pickupTime)} 取回</p>
+        <small>${instruments}</small>
+        <div class="my-booking-actions">
+          <span>申請編號：${escapeHtml(group.bookingId)}</span>
+          ${canCancel ? `<button class="secondary-button cancel-booking-button" type="button" data-booking-id="${escapeHtml(group.bookingId)}">申請取消</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadProfile() {
+  try {
+    renderProfile(await fetchProfile());
+  } catch (error) {
+    if (els.profileEmail) els.profileEmail.textContent = "無法讀取登入資訊";
+    if (els.profilePermission) els.profilePermission.textContent = error.message;
+  }
+}
+
+async function loadMyBookings() {
+  if (!els.myBookingsList) return;
+  els.myBookingsList.innerHTML = '<div class="instrument-groups-placeholder">正在讀取我的借用…</div>';
+  try {
+    renderMyBookings(await fetchMyBookings());
+  } catch (error) {
+    els.myBookingsList.innerHTML = `<div class="form-message error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function handleMyBookingsClick(event) {
+  const button = event.target.closest(".cancel-booking-button");
+  if (!button) return;
+  const bookingId = button.dataset.bookingId;
+  if (!window.confirm(`確定要取消 ${bookingId} 這筆借用嗎？\n系統會同步更新月行程表，並自動遞補第一順位備取。`)) return;
+  button.disabled = true;
+  button.textContent = "申請中…";
+  try {
+    const result = await requestCancelBooking(bookingId);
+    await loadMyBookings();
+    if (els.date.value) await handleDateChange();
+    window.alert(result.message || "已取消借用。");
+  } catch (error) {
+    window.alert(error.message);
+    button.disabled = false;
+    button.textContent = "申請取消";
   }
 }
 
@@ -714,6 +936,8 @@ els.editBooking.addEventListener("click", closeReview);
 els.confirmBooking.addEventListener("click", confirmBooking);
 els.newBooking.addEventListener("click", resetForm);
 els.closeRelease.addEventListener("click", closeReleaseNotes);
+els.refreshMyBookings?.addEventListener("click", loadMyBookings);
+els.myBookingsList?.addEventListener("click", handleMyBookingsClick);
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".hospital-field")) hideHospitalSuggestions();
   if (openCategory && !event.target.closest(".instrument-category")) {
@@ -725,5 +949,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !els.reviewModal.hidden) closeReview();
 });
 showReleaseNotesOnce();
+loadProfile();
+loadMyBookings();
 
 </script>

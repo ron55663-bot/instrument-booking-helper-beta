@@ -36,6 +36,7 @@
       <nav class="page-tabs" aria-label="工作台功能">
         <a class="active" href="#booking-form">儀器借用申請</a>
         <a href="#status-panel">借用排程總覽</a>
+        <a href="#my-instruments">我的儀器</a>
       </nav>
 
       <div class="workspace">
@@ -196,11 +197,35 @@
             </div>
             <p class="status-note"><i></i> 狀態會依 Google 試算表資料即時更新</p>
           </aside>
+
+          <section id="my-instruments" class="my-panel">
+            <div class="panel-heading">
+              <div>
+                <p>MY INSTRUMENTS</p>
+                <h2>我的儀器</h2>
+              </div>
+              <button id="refresh-my-bookings" class="mini-button" type="button">重新整理</button>
+            </div>
+            <div class="profile-card">
+              <span class="summary-dot available"></span>
+              <div>
+                <strong id="profile-email">讀取登入資訊中…</strong>
+                <small id="profile-permission">依公司帳號顯示你的借用與權限。</small>
+              </div>
+            </div>
+            <div id="my-bookings-list" class="my-bookings-list">
+              <div class="empty-state compact">
+                <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
+                <p>正在讀取我的借用…</p>
+              </div>
+            </div>
+            <p class="status-note"><i></i> 測試版取消功能會先送出「申請取消」，不會直接刪除排程。</p>
+          </section>
           </div>
         </main>
       </div>
       <footer id="help">
-        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.07</b></span>
+        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.1.6 Beta</b></span>
         <span class="footer-sync">資料同步至 Google 試算表</span>
       </footer>
     </div>
@@ -209,7 +234,7 @@
       <div class="review-modal release-modal">
         <div class="review-heading">
           <div>
-            <p>WHAT'S NEW・<span id="release-version">V1.07</span></p>
+            <p>WHAT'S NEW・<span id="release-version">V1.1.6 Beta</span></p>
             <h2 id="release-title">版本更新內容</h2>
           </div>
         </div>

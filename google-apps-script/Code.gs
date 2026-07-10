@@ -13,6 +13,7 @@
 
 const BOOKINGS_SHEET = "借用紀錄";
 const INSTRUMENTS_SHEET = "儀器清單";
+const PERMISSIONS_SHEET = "人員權限表";
 const SPREADSHEET_ID = "1srzjbSmguIPuV8OAEZ-6NlKJJyRUe9o3nNpm9ZLWEXs";
 const SCHEDULE_SHEET_SUFFIX = "月行程表";
 const SCHEDULE_FIRST_DATE_COLUMN = 6; // F 欄
@@ -125,9 +126,11 @@ function setupSheets() {
   const spreadsheet = getSpreadsheet();
   let bookings = spreadsheet.getSheetByName(BOOKINGS_SHEET);
   let instruments = spreadsheet.getSheetByName(INSTRUMENTS_SHEET);
+  let permissions = spreadsheet.getSheetByName(PERMISSIONS_SHEET);
 
   if (!bookings) bookings = spreadsheet.insertSheet(BOOKINGS_SHEET);
   if (!instruments) instruments = spreadsheet.insertSheet(INSTRUMENTS_SHEET);
+  if (!permissions) permissions = spreadsheet.insertSheet(PERMISSIONS_SHEET);
 
   if (bookings.getLastRow() === 0) {
     bookings.appendRow([
@@ -155,7 +158,13 @@ function setupSheets() {
   }
   ensureInstrumentsSheetSchema(instruments);
 
-  [bookings, instruments].forEach((sheet) => {
+  if (permissions.getLastRow() === 0) {
+    permissions.appendRow(["使用者Email", "姓名", "可借醫院", "可借區域", "可借儀器類別", "管理者", "啟用"]);
+    permissions.appendRow(["*", "測試預設：全部開放", "*", "*", "*", false, true]);
+    permissions.setFrozenRows(1);
+  }
+
+  [bookings, instruments, permissions].forEach((sheet) => {
     sheet.getRange(1, 1, 1, sheet.getLastColumn())
       .setBackground("#12372f")
       .setFontColor("#ffffff")
@@ -167,17 +176,21 @@ function setupSheets() {
 function ensureBookingsSheetSchema(sheet) {
   if (!sheet || sheet.getLastColumn() === 0) return;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  if (headers.indexOf("借用人") >= 0) return;
-
+  const requiredHeaders = ["借用人", "使用者Email", "取消申請時間", "取消原因", "遞補時間", "遞補自申請編號"];
   const hospitalColumn = headers.indexOf("借用醫院") + 1;
-  if (!hospitalColumn) throw new Error("借用紀錄缺少「借用醫院」欄位。");
-
-  sheet.insertColumnAfter(hospitalColumn);
-  sheet.getRange(1, hospitalColumn + 1)
-    .setValue("借用人")
-    .setBackground("#12372f")
-    .setFontColor("#ffffff")
-    .setFontWeight("bold");
+  requiredHeaders.forEach(function (header) {
+    if (headers.indexOf(header) >= 0) return;
+    if (header === "借用人" && hospitalColumn) {
+      sheet.insertColumnAfter(hospitalColumn);
+      sheet.getRange(1, hospitalColumn + 1).setValue(header);
+    } else {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+    }
+    sheet.getRange(1, 1, 1, sheet.getLastColumn())
+      .setBackground("#12372f")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold");
+  });
 }
 
 function ensureInstrumentsSheetSchema(sheet) {
@@ -224,13 +237,23 @@ function getCatalogRows() {
 
 function doGet(e) {
   try {
-    if (!e || !e.parameter || e.parameter.action !== "availability") {
+    if (!e || !e.parameter || !e.parameter.action) {
       return HtmlService
         .createTemplateFromFile("Index")
         .evaluate()
         .setTitle("儀器借用幫手 Beta測試版")
         .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     }
+
+    if (e.parameter.action === "profile") {
+      return jsonResponse({ success: true, profile: getUserProfile() });
+    }
+
+    if (e.parameter.action === "myBookings") {
+      return jsonResponse({ success: true, bookings: getMyBookings() });
+    }
+
+    if (e.parameter.action !== "availability") throw new Error("未知的查詢動作。");
 
     const date = sanitizeText(e.parameter.date, 10);
     assertValidDate(date);
@@ -255,81 +278,166 @@ function getActiveUserEmail() {
   return Session.getActiveUser().getEmail() || "";
 }
 
+function apiGetProfile() {
+  return { success: true, profile: getUserProfile() };
+}
+
+function apiGetMyBookings() {
+  return { success: true, bookings: getMyBookings() };
+}
+
+function apiGetAvailability(date) {
+  assertValidDate(date);
+  return { success: true, instruments: getAvailability(date) };
+}
+
+function apiSubmitBooking(data) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    return handleBookingSubmission(data);
+  } finally {
+    if (lock.hasLock()) lock.releaseLock();
+  }
+}
+
+function apiCancelBooking(data) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    return cancelMyBooking(data);
+  } finally {
+    if (lock.hasLock()) lock.releaseLock();
+  }
+}
+
+// 供管理者在修正程式後手動執行一次：只釋出「已取消」但月表仍保有
+// 相同醫院名稱的排程。這可安全修復舊版取消成功、月表卻未清空的資料。
+function repairCancelledSchedules() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getRequiredSheet(BOOKINGS_SHEET);
+    ensureBookingsSheetSchema(sheet);
+    const values = sheet.getDataRange().getDisplayValues();
+    const headers = values[0] || [];
+    let repaired = 0;
+    const errors = [];
+
+    values.slice(1).forEach(function (row) {
+      if (getCell(row, headers, "狀態") !== "已取消") return;
+      try {
+        if (isCancelledBookingStillOnSchedule(row, headers)) {
+          releaseMonthlyScheduleForBooking(row, headers);
+          repaired += 1;
+        }
+      } catch (error) {
+        errors.push(error.message);
+      }
+    });
+    SpreadsheetApp.getActive().toast("已修復 " + repaired + " 筆未釋出的取消排程。", "儀器借用幫手");
+    if (errors.length) throw new Error("部分資料無法修復：" + errors.join("；"));
+    return { success: true, repaired: repaired };
+  } finally {
+    if (lock.hasLock()) lock.releaseLock();
+  }
+}
+
 function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
     const data = JSON.parse(e.postData.contents);
-    validateBooking(data);
-
-    // 在鎖定狀態下再次逐台檢查，避免多人同時預約相同儀器。
-    const availability = getAvailability(data.date);
-    const selections = data.instruments.map((requested) => ({
-      requested: requested,
-      instrument: availability.find((item) => item.id === requested.id),
-    }));
-    if (selections.some((selection) => !selection.instrument)) {
-      throw new Error("部分儀器資料不存在，請返回重新選擇。");
-    }
-    const newlyUnavailable = selections.filter((selection) =>
-      selection.requested.requestType === "booking" && !selection.instrument.available
-    );
-    if (newlyUnavailable.length) {
-      throw new Error("部分原本可借的儀器剛剛已被借用，請返回改選備取。");
+    if (data && data.action === "cancel") {
+      return jsonResponse(cancelMyBooking(data));
     }
 
-    const bookingId = Utilities.getUuid().slice(0, 8).toUpperCase();
-    const sheet = getRequiredSheet(BOOKINGS_SHEET);
-    ensureBookingsSheetSchema(sheet);
-    const hospital = canonicalizeHospital(data.hospital);
-    const borrower = sanitizeText(data.borrower, 50);
-    const notes = sanitizeText(data.notes || "", 500);
-    const submittedAt = new Date();
-    let bookingCount = 0;
-    let waitlistCount = 0;
-    selections.forEach((selection) => {
-      const instrument = selection.instrument;
-      const status = instrument.available ? "已預約" : "備取中";
-      if (status === "已預約") bookingCount += 1;
-      if (status === "備取中") waitlistCount += 1;
-      updateMonthlySchedule({
-        date: data.date,
-        hospital: hospital,
-        deliveryTime: data.deliveryTime,
-        pickupTime: data.pickupTime,
-        notes: notes,
-        instrument: instrument,
-        status: status,
-        waitlistNumber: instrument.waitlistCount + 1,
-      });
-      sheet.appendRow([
-        bookingId,
-        data.date,
-        hospital,
-        borrower,
-        instrument.id,
-        instrument.name,
-        instrument.category,
-        data.deliveryTime,
-        data.pickupTime,
-        notes,
-        submittedAt,
-        status,
-      ]);
-    });
-
-    return jsonResponse({
-      success: true,
-      bookingId: bookingId,
-      instrumentCount: selections.length,
-      bookingCount: bookingCount,
-      waitlistCount: waitlistCount,
-    });
+    return jsonResponse(handleBookingSubmission(data));
   } catch (error) {
     return jsonResponse({ success: false, message: error.message });
   } finally {
     if (lock.hasLock()) lock.releaseLock();
   }
+}
+
+function handleBookingSubmission(data) {
+  validateBooking(data);
+
+  // 在鎖定狀態下再次逐台檢查，避免多人同時預約相同儀器。
+  const availability = getAvailability(data.date);
+  const selections = data.instruments.map((requested) => ({
+    requested: requested,
+    instrument: availability.find((item) => item.id === requested.id),
+  }));
+  if (selections.some((selection) => !selection.instrument)) {
+    throw new Error("部分儀器資料不存在，請返回重新選擇。");
+  }
+  const newlyUnavailable = selections.filter((selection) =>
+    selection.requested.requestType === "booking" && !selection.instrument.available
+  );
+  if (newlyUnavailable.length) {
+    throw new Error("部分原本可借的儀器剛剛已被借用，請返回改選備取。");
+  }
+
+  const bookingId = Utilities.getUuid().slice(0, 8).toUpperCase();
+  const sheet = getRequiredSheet(BOOKINGS_SHEET);
+  ensureBookingsSheetSchema(sheet);
+  const hospital = canonicalizeHospital(data.hospital);
+  const borrower = sanitizeText(data.borrower, 50);
+  const notes = sanitizeText(data.notes || "", 500);
+  const userEmail = getActiveUserEmail();
+  const submittedAt = new Date();
+  let bookingCount = 0;
+  let waitlistCount = 0;
+  selections.forEach((selection) => {
+    const instrument = selection.instrument;
+    const status = instrument.available ? "已預約" : "備取中";
+    if (status === "已預約") bookingCount += 1;
+    if (status === "備取中") waitlistCount += 1;
+    updateMonthlySchedule({
+      date: data.date,
+      hospital: hospital,
+      deliveryTime: data.deliveryTime,
+      pickupTime: data.pickupTime,
+      notes: notes,
+      instrument: instrument,
+      status: status,
+      waitlistNumber: instrument.waitlistCount + 1,
+    });
+    sheet.appendRow([
+      bookingId,
+      data.date,
+      hospital,
+      borrower,
+      instrument.id,
+      instrument.name,
+      instrument.category,
+      data.deliveryTime,
+      data.pickupTime,
+      notes,
+      submittedAt,
+      status,
+    ]);
+    setBookingRowExtras(sheet, sheet.getLastRow(), {
+      "使用者Email": userEmail,
+    });
+  });
+
+  return {
+    success: true,
+    bookingId: bookingId,
+    instrumentCount: selections.length,
+    bookingCount: bookingCount,
+    waitlistCount: waitlistCount,
+  };
+}
+
+function setBookingRowExtras(sheet, rowNumber, values) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  Object.keys(values).forEach(function (header) {
+    const column = headers.indexOf(header) + 1;
+    if (column) sheet.getRange(rowNumber, column).setValue(values[header]);
+  });
 }
 
 function getAvailability(date) {
@@ -540,6 +648,368 @@ function validateBooking(data) {
   }
   if (!isTime(data.deliveryTime) || !isTime(data.pickupTime)) throw new Error("時間格式不正確。");
   if (data.pickupTime <= data.deliveryTime) throw new Error("取回時間必須晚於送達時間。");
+  assertUserCanBook(data);
+}
+
+function getUserProfile() {
+  const email = getActiveUserEmail();
+  const permission = getUserPermission(email);
+  return {
+    email: email,
+    name: permission.name || "",
+    isAdmin: permission.isAdmin,
+    unrestricted: permission.unrestricted,
+    hospitals: permission.hospitals,
+    regions: permission.regions,
+    categories: permission.categories,
+  };
+}
+
+function getUserPermission(email) {
+  const sheet = getSpreadsheet().getSheetByName(PERMISSIONS_SHEET);
+  const defaultPermission = {
+    email: email,
+    name: "",
+    isAdmin: false,
+    unrestricted: true,
+    hospitals: ["*"],
+    regions: ["*"],
+    categories: ["*"],
+  };
+  if (!sheet || sheet.getLastRow() < 2) return defaultPermission;
+  const values = sheet.getDataRange().getDisplayValues();
+  const headers = values[0] || [];
+  const rows = values.slice(1).filter(function (row) {
+    const active = getCell(row, headers, "啟用");
+    return active === "" || active === "TRUE" || active === "true" || active === "是";
+  });
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const row = rows.find(function (item) {
+    const value = getCell(item, headers, "使用者Email").toLowerCase();
+    return value === normalizedEmail;
+  }) || rows.find(function (item) {
+    return getCell(item, headers, "使用者Email") === "*";
+  });
+  // 權限表已建立時，未列入名單的帳號一律不可借用；只有啟用中的「*」
+  // 預設列才代表全部開放。這可避免漏建帳號時意外取得借用權限。
+  if (!row) {
+    return {
+      email: email,
+      name: "",
+      isAdmin: false,
+      unrestricted: false,
+      hospitals: [],
+      regions: [],
+      categories: [],
+    };
+  }
+  return {
+    email: email,
+    name: getCell(row, headers, "姓名"),
+    isAdmin: parseBoolean(getCell(row, headers, "管理者")),
+    unrestricted: false,
+    hospitals: parseList(getCell(row, headers, "可借醫院")),
+    regions: parseList(getCell(row, headers, "可借區域")),
+    categories: parseList(getCell(row, headers, "可借儀器類別")),
+  };
+}
+
+function assertUserCanBook(data) {
+  const permission = getUserPermission(getActiveUserEmail());
+  if (permission.unrestricted || permission.isAdmin) return;
+  const hospital = canonicalizeHospital(data.hospital);
+  if (!isAllowedValue(hospital, permission.hospitals)) {
+    throw new Error("你的帳號目前沒有借用「" + hospital + "」的權限。");
+  }
+  const instrumentSheet = getRequiredSheet(INSTRUMENTS_SHEET);
+  ensureInstrumentsSheetSchema(instrumentSheet);
+  const values = instrumentSheet.getDataRange().getDisplayValues();
+  const headers = values[0] || [];
+  const rows = values.slice(1);
+  const requestedIds = data.instruments.map(function (item) { return item.id; });
+  rows.forEach(function (row) {
+    const id = getCell(row, headers, "系統識別碼");
+    if (requestedIds.indexOf(id) < 0) return;
+    const region = getCell(row, headers, "區域劃分");
+    const category = getCell(row, headers, "分類");
+    if (!isAllowedValue(region, permission.regions)) {
+      throw new Error("你的帳號目前沒有借用「" + region + "」區儀器的權限。");
+    }
+    if (!isAllowedValue(category, permission.categories)) {
+      throw new Error("你的帳號目前沒有借用「" + category + "」的權限。");
+    }
+  });
+}
+
+function getMyBookings() {
+  const email = getActiveUserEmail();
+  const permission = getUserPermission(email);
+  const sheet = getRequiredSheet(BOOKINGS_SHEET);
+  ensureBookingsSheetSchema(sheet);
+  const values = sheet.getDataRange().getDisplayValues();
+  const headers = values[0] || [];
+  return values.slice(1)
+    .map(function (row, index) {
+      return {
+        rowNumber: index + 2,
+        bookingId: getCell(row, headers, "申請編號"),
+        date: normalizeDate(getCell(row, headers, "借用日期")),
+        hospital: getCell(row, headers, "借用醫院"),
+        borrower: getCell(row, headers, "借用人"),
+        userEmail: getCell(row, headers, "使用者Email"),
+        instrumentId: getCell(row, headers, "系統識別碼"),
+        instrumentName: getCell(row, headers, "儀器名稱"),
+        category: getCell(row, headers, "儀器類別"),
+        deliveryTime: getCell(row, headers, "送達時間"),
+        pickupTime: getCell(row, headers, "取回時間"),
+        notes: getCell(row, headers, "備註／手術內容"),
+        submittedAt: getCell(row, headers, "申請時間"),
+        status: getCell(row, headers, "狀態"),
+        cancelRequestedAt: getCell(row, headers, "取消申請時間"),
+      };
+    })
+    .filter(function (item) {
+      if (permission.isAdmin) return true;
+      return item.userEmail && item.userEmail.toLowerCase() === String(email || "").toLowerCase();
+    })
+    .filter(function (item) {
+      return item.status !== "已取消";
+    })
+    .sort(function (left, right) {
+      return String(left.date).localeCompare(String(right.date)) || String(left.bookingId).localeCompare(String(right.bookingId));
+    });
+}
+
+function cancelMyBooking(data) {
+  const bookingId = sanitizeText(data.bookingId, 40);
+  const reason = sanitizeText(data.reason || "使用者申請取消", 200);
+  if (!bookingId) throw new Error("缺少取消申請編號。");
+  const email = getActiveUserEmail();
+  const permission = getUserPermission(email);
+  const sheet = getRequiredSheet(BOOKINGS_SHEET);
+  ensureBookingsSheetSchema(sheet);
+  const values = sheet.getDataRange().getDisplayValues();
+  const headers = values[0] || [];
+  const bookingIdIndex = headers.indexOf("申請編號");
+  const emailIndex = headers.indexOf("使用者Email");
+  const statusColumn = headers.indexOf("狀態") + 1;
+  const cancelAtColumn = headers.indexOf("取消申請時間") + 1;
+  const cancelReasonColumn = headers.indexOf("取消原因") + 1;
+  let updated = 0;
+  const promotions = [];
+  const scheduleErrors = [];
+  values.slice(1).forEach(function (row, index) {
+    if (row[bookingIdIndex] !== bookingId) return;
+    const rowEmail = emailIndex >= 0 ? String(row[emailIndex] || "").toLowerCase() : "";
+    if (!permission.isAdmin && rowEmail !== String(email || "").toLowerCase()) return;
+    const rowNumber = index + 2;
+    const originalStatus = getCell(row, headers, "狀態");
+    let released = false;
+    try {
+      releaseMonthlyScheduleForBooking(row, headers);
+      released = true;
+    } catch (error) {
+      scheduleErrors.push(error.message);
+    }
+    sheet.getRange(rowNumber, statusColumn).setValue("已取消");
+    if (cancelAtColumn) sheet.getRange(rowNumber, cancelAtColumn).setValue(new Date());
+    if (cancelReasonColumn) sheet.getRange(rowNumber, cancelReasonColumn).setValue(reason);
+    if (released && originalStatus === "已預約") {
+      try {
+        const promotion = promoteFirstWaitlist(sheet, row, headers, bookingId);
+        if (promotion) promotions.push(promotion);
+      } catch (error) {
+        scheduleErrors.push("遞補失敗：" + error.message);
+      }
+    }
+    updated += 1;
+  });
+  if (!updated) throw new Error("找不到可取消的借用資料，或這筆資料不屬於你的帳號。");
+  if (scheduleErrors.length) {
+    throw new Error("取消紀錄已更新，但月行程表未完全釋出：" + scheduleErrors.join("；"));
+  }
+  const promotedText = promotions.length
+    ? " 已自動遞補 " + promotions.map(function (item) { return item.instrumentName + "（" + item.hospital + "）"; }).join("、") + "。"
+    : "";
+  return {
+    success: true,
+    updated: updated,
+    promotions: promotions,
+    message: "已取消借用並同步更新月行程表。" + promotedText,
+  };
+}
+
+function promoteFirstWaitlist(sheet, cancelledRow, headers, cancelledBookingId) {
+  const date = normalizeDate(getCell(cancelledRow, headers, "借用日期"));
+  const instrumentId = getCell(cancelledRow, headers, "系統識別碼");
+  const instrumentName = getCell(cancelledRow, headers, "儀器名稱") || getCell(cancelledRow, headers, "儀器編號");
+  if (!date || !instrumentId) return null;
+
+  const values = sheet.getDataRange().getDisplayValues();
+  const currentHeaders = values[0] || headers;
+  const candidates = values.slice(1).map(function (row, index) {
+    return { row: row, rowNumber: index + 2 };
+  }).filter(function (item) {
+    return normalizeDate(getCell(item.row, currentHeaders, "借用日期")) === date &&
+      getCell(item.row, currentHeaders, "系統識別碼") === instrumentId &&
+      getCell(item.row, currentHeaders, "狀態") === "備取中";
+  });
+  if (!candidates.length) return null;
+
+  // 借用紀錄以 appendRow 新增，列號最小者就是最早的備取申請。
+  const candidate = candidates[0];
+  const availability = getAvailability(date);
+  const instrument = availability.find(function (item) {
+    return item.id === instrumentId || item.name === instrumentName;
+  });
+  if (!instrument || !instrument.scheduleRow) {
+    throw new Error("找不到「" + instrumentName + "」的月行程表位置");
+  }
+
+  const hospital = getCell(candidate.row, currentHeaders, "借用醫院");
+  const notes = getCell(candidate.row, currentHeaders, "備註／手術內容");
+  const schedule = getScheduleContext(date);
+  const notesCell = schedule.sheet.getRange(instrument.scheduleRow + 1, schedule.dateColumn + 2);
+  removeWaitlistText(notesCell, hospital);
+  updateMonthlySchedule({
+    date: date,
+    hospital: hospital,
+    deliveryTime: getCell(candidate.row, currentHeaders, "送達時間"),
+    pickupTime: getCell(candidate.row, currentHeaders, "取回時間"),
+    notes: notes,
+    instrument: instrument,
+    status: "已預約",
+  });
+
+  const statusColumn = currentHeaders.indexOf("狀態") + 1;
+  sheet.getRange(candidate.rowNumber, statusColumn).setValue("已預約");
+  setBookingRowExtras(sheet, candidate.rowNumber, {
+    "遞補時間": new Date(),
+    "遞補自申請編號": cancelledBookingId,
+  });
+  return {
+    bookingId: getCell(candidate.row, currentHeaders, "申請編號"),
+    hospital: hospital,
+    borrower: getCell(candidate.row, currentHeaders, "借用人"),
+    instrumentName: instrumentName,
+  };
+}
+
+function releaseMonthlyScheduleForBooking(row, headers) {
+  const date = normalizeDate(getCell(row, headers, "借用日期"));
+  const instrumentId = getCell(row, headers, "系統識別碼");
+  const instrumentName = getCell(row, headers, "儀器名稱") || getCell(row, headers, "儀器編號");
+  const status = getCell(row, headers, "狀態");
+  const hospital = getCell(row, headers, "借用醫院");
+  const deliveryTime = getCell(row, headers, "送達時間");
+  const pickupTime = getCell(row, headers, "取回時間");
+  if (!date || !instrumentName) return;
+
+  const availability = getAvailability(date);
+  const instrument = availability.find(function (item) {
+    return item.id === instrumentId || item.name === instrumentName;
+  });
+  if (!instrument || !instrument.scheduleRow) {
+    throw new Error("找不到「" + instrumentName + "」在月行程表中的位置");
+  }
+
+  const schedule = getScheduleContext(date);
+  const baseRow = instrument.scheduleRow;
+  const destinationRow = baseRow + 1;
+  const deliveryCell = schedule.sheet.getRange(baseRow, schedule.dateColumn + 1);
+  const hospitalCell = schedule.sheet.getRange(destinationRow, schedule.dateColumn);
+  const pickupCell = schedule.sheet.getRange(destinationRow, schedule.dateColumn + 1);
+  const notesCell = schedule.sheet.getRange(destinationRow, schedule.dateColumn + 2);
+
+  if (status === "備取中") {
+    removeWaitlistText(notesCell, hospital);
+    return;
+  }
+
+  // 日期與儀器列已確認相符，直接釋出三個排程欄位。不可依賴時間文字完全一致，
+  // 因為試算表的自動格式化可能讓「送達08:00」等文字產生細微差異。
+  deliveryCell.clearContent();
+  hospitalCell.clearContent();
+  pickupCell.clearContent();
+  removeBookingNotes(notesCell, getCell(row, headers, "備註／手術內容"));
+}
+
+function isCancelledBookingStillOnSchedule(row, headers) {
+  const date = normalizeDate(getCell(row, headers, "借用日期"));
+  const instrumentId = getCell(row, headers, "系統識別碼");
+  const instrumentName = getCell(row, headers, "儀器名稱") || getCell(row, headers, "儀器編號");
+  const hospital = getCell(row, headers, "借用醫院");
+  if (!date || !instrumentName || !hospital) return false;
+
+  const availability = getAvailability(date);
+  const instrument = availability.find(function (item) {
+    return item.id === instrumentId || item.name === instrumentName;
+  });
+  if (!instrument || !instrument.scheduleRow) return false;
+
+  const schedule = getScheduleContext(date);
+  const currentHospital = schedule.sheet
+    .getRange(instrument.scheduleRow + 1, schedule.dateColumn)
+    .getDisplayValue()
+    .trim();
+  return currentHospital === hospital;
+}
+
+function clearCellIfMatches(cell, expectedText) {
+  const current = cell.getDisplayValue().trim();
+  const expected = String(expectedText || "").trim();
+  if (!current) return;
+  if (!expected || current === expected) {
+    cell.clearContent();
+  }
+}
+
+function removeWaitlistText(cell, hospital) {
+  const current = cell.getDisplayValue();
+  if (!current) return;
+  const hospitalText = String(hospital || "").trim();
+  const lines = current
+    .split(/\n/)
+    .filter(function (line) {
+      const text = line.trim();
+      if (!text) return false;
+      return !(hospitalText && /^備取\s*\d+\s*[:：]/.test(text) && text.indexOf(hospitalText) >= 0);
+    });
+  cell.setValue(lines.join("\n"));
+}
+
+function removeBookingNotes(cell, notes) {
+  const noteText = String(notes || "").trim();
+  const current = cell.getDisplayValue();
+  if (!noteText || !current) return;
+  if (current.trim() === noteText) {
+    cell.clearContent();
+    return;
+  }
+  const lines = current.split(/\n/).filter(function (line) {
+    return line.trim() !== noteText;
+  });
+  cell.setValue(lines.join("\n"));
+}
+
+function getCell(row, headers, header) {
+  const index = headers.indexOf(header);
+  return index >= 0 ? String(row[index] || "").trim() : "";
+}
+
+function parseList(value) {
+  const text = String(value || "").trim();
+  if (!text || text === "*") return ["*"];
+  return text.split(/[,，、\n]/).map(function (item) { return item.trim(); }).filter(Boolean);
+}
+
+function isAllowedValue(value, allowedValues) {
+  return allowedValues.indexOf("*") >= 0 || allowedValues.indexOf(value) >= 0;
+}
+
+function parseBoolean(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return text === "true" || text === "yes" || text === "1" || text === "是";
 }
 
 function normalizeHospitalName(value) {
