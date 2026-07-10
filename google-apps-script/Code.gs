@@ -146,6 +146,7 @@ function setupSheets() {
       "備註／手術內容",
       "申請時間",
       "狀態",
+      "建立來源",
     ]);
     bookings.setFrozenRows(1);
   }
@@ -176,7 +177,7 @@ function setupSheets() {
 function ensureBookingsSheetSchema(sheet) {
   if (!sheet || sheet.getLastColumn() === 0) return;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  const requiredHeaders = ["借用人", "使用者Email", "取消申請時間", "取消原因", "遞補時間", "遞補自申請編號"];
+  const requiredHeaders = ["借用人", "使用者Email", "建立來源", "取消申請時間", "取消原因", "遞補時間", "遞補自申請編號"];
   const hospitalColumn = headers.indexOf("借用醫院") + 1;
   requiredHeaders.forEach(function (header) {
     if (headers.indexOf(header) >= 0) return;
@@ -275,7 +276,11 @@ function getWebAppUrl() {
 }
 
 function getActiveUserEmail() {
-  return Session.getActiveUser().getEmail() || "";
+  const email = Session.getActiveUser().getEmail() || "";
+  if (!email) {
+    throw new Error("無法辨識公司帳號，請以公司 Google 帳號開啟此 App。");
+  }
+  return email;
 }
 
 function apiGetProfile() {
@@ -306,6 +311,60 @@ function apiCancelBooking(data) {
   try {
     lock.waitLock(10000);
     return cancelMyBooking(data);
+  } finally {
+    if (lock.hasLock()) lock.releaseLock();
+  }
+}
+
+// 安裝一次即可：每 5 分鐘檢查月行程表是否被授權人員手動清空，並遞補第一順位備取。
+function installAutoSyncTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === "syncManualScheduleChanges") {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+  ScriptApp.newTrigger("syncManualScheduleChanges").timeBased().everyMinutes(5).create();
+  SpreadsheetApp.getActive().toast("已啟用每 5 分鐘自動檢查與備取遞補。", "儀器借用幫手");
+}
+
+// 供時間觸發器執行，也可由管理者手動執行測試。
+function syncManualScheduleChanges() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getRequiredSheet(BOOKINGS_SHEET);
+    ensureBookingsSheetSchema(sheet);
+    const values = sheet.getDataRange().getDisplayValues();
+    const headers = values[0] || [];
+    const statusColumn = headers.indexOf("狀態") + 1;
+    const cancelAtColumn = headers.indexOf("取消申請時間") + 1;
+    const cancelReasonColumn = headers.indexOf("取消原因") + 1;
+    const today = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd");
+    let released = 0;
+    let promoted = 0;
+    const errors = [];
+
+    values.slice(1).forEach(function (row, index) {
+      try {
+        const date = normalizeDate(getCell(row, headers, "借用日期"));
+        // 僅處理由 App 建立且可完整追蹤的紀錄；人工 key-in 資料一律不自動異動。
+        if (getCell(row, headers, "建立來源") !== "App" || getCell(row, headers, "狀態") !== "已預約" || date < today) return;
+        if (!isBookedRecordMissingFromSchedule(row, headers)) return;
+
+        const rowNumber = index + 2;
+        const bookingId = getCell(row, headers, "申請編號");
+        sheet.getRange(rowNumber, statusColumn).setValue("已取消");
+        if (cancelAtColumn) sheet.getRange(rowNumber, cancelAtColumn).setValue(new Date());
+        if (cancelReasonColumn) sheet.getRange(rowNumber, cancelReasonColumn).setValue("管理者於月行程表手動釋出");
+        released += 1;
+
+        const replacement = promoteFirstWaitlist(sheet, row, headers, bookingId);
+        if (replacement) promoted += 1;
+      } catch (error) {
+        errors.push("第 " + (index + 2) + " 列：" + error.message);
+      }
+    });
+    return { success: true, released: released, promoted: promoted, errors: errors };
   } finally {
     if (lock.hasLock()) lock.releaseLock();
   }
@@ -420,6 +479,7 @@ function handleBookingSubmission(data) {
     ]);
     setBookingRowExtras(sheet, sheet.getLastRow(), {
       "使用者Email": userEmail,
+      "建立來源": "App",
     });
   });
 
@@ -953,6 +1013,24 @@ function isCancelledBookingStillOnSchedule(row, headers) {
     .getDisplayValue()
     .trim();
   return currentHospital === hospital;
+}
+
+function isBookedRecordMissingFromSchedule(row, headers) {
+  const date = normalizeDate(getCell(row, headers, "借用日期"));
+  const instrumentId = getCell(row, headers, "系統識別碼");
+  const instrumentName = getCell(row, headers, "儀器名稱") || getCell(row, headers, "儀器編號");
+  if (!date || !instrumentName) return false;
+  const availability = getAvailability(date);
+  const instrument = availability.find(function (item) {
+    return item.id === instrumentId || item.name === instrumentName;
+  });
+  if (!instrument || !instrument.scheduleRow) return false;
+  const schedule = getScheduleContext(date);
+  const currentHospital = schedule.sheet
+    .getRange(instrument.scheduleRow + 1, schedule.dateColumn)
+    .getDisplayValue()
+    .trim();
+  return !currentHospital;
 }
 
 function clearCellIfMatches(cell, expectedText) {

@@ -1,12 +1,18 @@
 <script>
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.1.6-beta";
-const APP_VERSION_LABEL = "V1.1.6 Beta";
+const APP_VERSION = "1.1.14-beta";
+const APP_VERSION_LABEL = "V1.1.14 Beta";
 const RELEASE_NOTES = [
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
   "修正取消流程讀取錯誤的儀器欄位，並可修復舊版未釋出的排程。",
   "取消已預約儀器時，系統會依申請順序自動遞補第一順位備取。",
+  "修正手機版公司帳號登入資訊讀取與提示。",
+  "修正 iPhone 開啟 Apps Script 時被縮小的手機版面。",
+  "移除 Safari 不相容的強制縮放，恢復完整可操作版面。",
+  "Facebook、LINE 等內建瀏覽器改為提示使用 Safari 或 Chrome。",
+  "新增手動釋出排程後的自動檢查遞補與 LINE 分享通知文字。",
+  "自動取消與遞補只處理 App 建立的借用；人工 key-in 排程維持人工檢查。",
   "修正 Apps Script 公司登入版讀取登入帳號與我的借用失敗問題。",
   "新增「我的儀器」測試頁，可查看自己的借用與備取紀錄。",
   "新增取消借用測試流程：取消後同步釋出月行程表。",
@@ -155,6 +161,9 @@ const els = {
   successModal: document.querySelector("#success-modal"),
   successSummary: document.querySelector("#success-summary"),
   newBooking: document.querySelector("#new-booking-button"),
+  successTitle: document.querySelector("#success-title"),
+  shareText: document.querySelector("#share-text"),
+  shareResultButton: document.querySelector("#share-result-button"),
   chooseToday: document.querySelector("#choose-today"),
   todayLabel: document.querySelector("#today-label"),
   statusDate: document.querySelector("#status-date"),
@@ -170,6 +179,8 @@ const els = {
   releaseVersion: document.querySelector("#release-version"),
   releaseNotes: document.querySelector("#release-notes"),
   closeRelease: document.querySelector("#close-release-button"),
+  unsupportedBrowserNotice: document.querySelector("#unsupported-browser-notice"),
+  retrySupportedBrowser: document.querySelector("#retry-supported-browser"),
 };
 
 let currentInstruments = [];
@@ -179,6 +190,8 @@ let pendingPayload = null;
 let hospitalMatches = [];
 let hospitalSuggestionIndex = -1;
 let currentProfile = null;
+let myBookingsCache = [];
+let currentShareText = "";
 
 function normalizeHospitalName(value) {
   return String(value || "")
@@ -334,6 +347,24 @@ function canUseGoogleScriptRun() {
   return Boolean(window.google && google.script && google.script.run);
 }
 
+function isUnsupportedInAppBrowser() {
+  const agent = navigator.userAgent || "";
+  return /FBAN|FBAV|FB_IAB|Instagram|Line\//i.test(agent);
+}
+
+function enforceSupportedBrowser() {
+  if (!isUnsupportedInAppBrowser()) return true;
+  if (els.unsupportedBrowserNotice) els.unsupportedBrowserNotice.hidden = false;
+  return false;
+}
+
+function fixIPhoneWideViewport() {
+  const root = document.documentElement;
+  // Safari 的 zoom 對 Apps Script 容器會造成內容只停在左半邊，因此不使用強制縮放。
+  root.classList.remove("ios-wide-viewport");
+  root.style.removeProperty("--ios-wide-viewport-scale");
+}
+
 function runServer(functionName, ...args) {
   return new Promise((resolve, reject) => {
     google.script.run
@@ -356,15 +387,34 @@ async function fetchProfile() {
   }
   if (canUseGoogleScriptRun()) {
     const result = await runServer("apiGetProfile");
-    if (!result.success) throw new Error(result.message || "無法取得登入資訊");
-    return result.profile;
+    if (result && result.success && result.profile) return normalizeProfile(result.profile);
+    // 相容少數仍使用舊版後端回傳格式的部署。
+    if (result && typeof result === "object" && result.email !== undefined) return normalizeProfile(result);
+    throw new Error((result && result.message) || "無法取得公司帳號，請以公司 Google 帳號重新開啟。 ");
   }
   const url = getApiBaseUrl();
   url.searchParams.set("action", "profile");
   const response = await fetch(url);
   const result = await response.json();
-  if (!response.ok || !result.success) throw new Error(result.message || "無法取得登入資訊");
-  return result.profile;
+  if (!response.ok || !result || !result.success || !result.profile) {
+    throw new Error((result && result.message) || "無法取得公司帳號，請以公司 Google 帳號重新開啟。");
+  }
+  return normalizeProfile(result.profile);
+}
+
+function normalizeProfile(profile) {
+  if (!profile || typeof profile !== "object") {
+    throw new Error("無法取得公司帳號，請以公司 Google 帳號重新開啟。");
+  }
+  return {
+    email: String(profile.email || ""),
+    name: String(profile.name || ""),
+    isAdmin: Boolean(profile.isAdmin),
+    unrestricted: Boolean(profile.unrestricted),
+    hospitals: Array.isArray(profile.hospitals) ? profile.hospitals : [],
+    regions: Array.isArray(profile.regions) ? profile.regions : [],
+    categories: Array.isArray(profile.categories) ? profile.categories : [],
+  };
 }
 
 async function fetchMyBookings() {
@@ -698,9 +748,9 @@ async function confirmBooking() {
   els.reviewError.hidden = true;
 
   try {
-    await submitBooking(pendingPayload);
+    const result = await submitBooking(pendingPayload);
     els.reviewModal.hidden = true;
-    showSuccess(pendingPayload);
+    showSuccess(pendingPayload, result);
   } catch (error) {
     els.reviewError.textContent = error.message;
     els.reviewError.hidden = false;
@@ -708,6 +758,76 @@ async function confirmBooking() {
     els.confirmBooking.disabled = false;
     els.confirmBooking.textContent = "確定送出";
   }
+}
+
+function formatShareDate(date) {
+  const parts = String(date || "").split("-");
+  return parts.length === 3 ? `${Number(parts[1])}/${Number(parts[2])}` : String(date || "");
+}
+
+function setShareText(text) {
+  currentShareText = text;
+  if (els.shareText) els.shareText.value = text;
+}
+
+function buildBookingShareText(payload) {
+  const booked = payload.instruments.filter((item) => item.requestType === "booking").map((item) => item.name);
+  const waitlisted = payload.instruments.filter((item) => item.requestType === "waitlist").map((item) => item.name);
+  const lines = [
+    "借用申請送出",
+    `日期：${formatShareDate(payload.date)}`,
+    `醫院：${payload.hospital}`,
+    `借用人：${payload.borrower}`,
+    `備註/手術內容：${payload.notes || "無"}`,
+    `借用：${booked.join("、") || "無"}`,
+  ];
+  if (waitlisted.length) lines.push(`備取：${waitlisted.join("、")}`);
+  lines.push("---App借用並完成自動更新---");
+  return lines.join("\n");
+}
+
+function buildCancelShareText(group, result) {
+  const instruments = group.instruments.map((item) => item.instrumentName).filter(Boolean);
+  const promotions = (result.promotions || []).map((item) => item.hospital).filter(Boolean);
+  return [
+    "---取消借用---",
+    `日期：${formatShareDate(group.date)}`,
+    `醫院：${group.hospital}`,
+    `借用人：${group.borrower}`,
+    `取消借用：${instruments.join("、") || "無"}`,
+    "",
+    `遞補備取：${promotions.join("、") || "無"}`,
+    "---App取消/遞補備取並完成自動更新---",
+  ].join("\n");
+}
+
+async function shareCurrentResult() {
+  if (!currentShareText) return;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "儀器借用通知", text: currentShareText });
+      return;
+    }
+    copyShareText();
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    copyShareText();
+  }
+}
+
+function copyShareText() {
+  const source = els.shareText;
+  if (!source || !currentShareText) return;
+  source.focus();
+  source.select();
+  source.setSelectionRange(0, source.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    copied = false;
+  }
+  window.alert(copied ? "通知文字已複製，可開啟 LINE 貼上分享。" : "文字已全選，請長按後選擇「複製」，再貼到 LINE。");
 }
 
 function showSuccess(payload) {
@@ -719,6 +839,10 @@ function showSuccess(payload) {
     ${escapeHtml(formatDate(payload.date))}・${escapeHtml(payload.deliveryTime)}－${escapeHtml(payload.pickupTime)}<br>
     ${bookingCount ? `直接借用 ${bookingCount} 台` : ""}${bookingCount && waitlistCount ? "・" : ""}${waitlistCount ? `排隊備取 ${waitlistCount} 台` : ""}
   `;
+  if (els.successTitle) els.successTitle.textContent = "借用申請已送出";
+  if (els.newBooking) els.newBooking.textContent = "再新增一筆";
+  if (els.shareResultButton) els.shareResultButton.textContent = navigator.share ? "分享至 LINE／其他 App" : "複製通知文字";
+  setShareText(buildBookingShareText(payload));
   els.successModal.hidden = false;
   els.newBooking.focus();
   loadMyBookings();
@@ -743,6 +867,7 @@ function resetForm() {
   `;
   els.notesCount.textContent = "0";
   els.successModal.hidden = true;
+  currentShareText = "";
   els.date.focus();
 }
 
@@ -781,15 +906,15 @@ function showReleaseNotesOnce() {
 }
 
 function renderProfile(profile) {
-  currentProfile = profile;
+  currentProfile = normalizeProfile(profile);
   if (!els.profileEmail) return;
-  els.profileEmail.textContent = profile.email || "未取得公司帳號";
-  if (profile.isAdmin) {
+  els.profileEmail.textContent = currentProfile.email || "未取得公司帳號";
+  if (currentProfile.isAdmin) {
     els.profilePermission.textContent = "管理者權限：可查看全部借用。";
-  } else if (profile.unrestricted || (profile.hospitals || []).includes("*")) {
+  } else if (currentProfile.unrestricted || currentProfile.hospitals.includes("*")) {
     els.profilePermission.textContent = "測試版目前全部開放；填寫人員權限表後會依帳號限制。";
   } else {
-    els.profilePermission.textContent = `可借醫院 ${profile.hospitals.length} 項・區域：${profile.regions.join("、")}。`;
+    els.profilePermission.textContent = `可借醫院 ${currentProfile.hospitals.length} 項・區域：${currentProfile.regions.join("、")}。`;
   }
 }
 
@@ -852,7 +977,8 @@ async function loadMyBookings() {
   if (!els.myBookingsList) return;
   els.myBookingsList.innerHTML = '<div class="instrument-groups-placeholder">正在讀取我的借用…</div>';
   try {
-    renderMyBookings(await fetchMyBookings());
+    myBookingsCache = await fetchMyBookings();
+    renderMyBookings(myBookingsCache);
   } catch (error) {
     els.myBookingsList.innerHTML = `<div class="form-message error">${escapeHtml(error.message)}</div>`;
   }
@@ -862,6 +988,7 @@ async function handleMyBookingsClick(event) {
   const button = event.target.closest(".cancel-booking-button");
   if (!button) return;
   const bookingId = button.dataset.bookingId;
+  const group = groupBookings(myBookingsCache).find((item) => item.bookingId === bookingId);
   if (!window.confirm(`確定要取消 ${bookingId} 這筆借用嗎？\n系統會同步更新月行程表，並自動遞補第一順位備取。`)) return;
   button.disabled = true;
   button.textContent = "申請中…";
@@ -869,7 +996,12 @@ async function handleMyBookingsClick(event) {
     const result = await requestCancelBooking(bookingId);
     await loadMyBookings();
     if (els.date.value) await handleDateChange();
-    window.alert(result.message || "已取消借用。");
+    if (els.successTitle) els.successTitle.textContent = "取消借用完成";
+    if (els.newBooking) els.newBooking.textContent = "返回借用申請";
+    if (els.shareResultButton) els.shareResultButton.textContent = navigator.share ? "分享至 LINE／其他 App" : "複製通知文字";
+    els.successSummary.innerHTML = `<strong>${escapeHtml(group?.hospital || "")}</strong><br>已取消 ${escapeHtml(group?.instruments.map((item) => item.instrumentName).join("、") || "借用")}${result.promotions?.length ? "，並已完成備取遞補。" : "。"}`;
+    setShareText(buildCancelShareText(group || { date: "", hospital: "", borrower: "", instruments: [] }, result));
+    els.successModal.hidden = false;
   } catch (error) {
     window.alert(error.message);
     button.disabled = false;
@@ -935,6 +1067,12 @@ els.closeReview.addEventListener("click", closeReview);
 els.editBooking.addEventListener("click", closeReview);
 els.confirmBooking.addEventListener("click", confirmBooking);
 els.newBooking.addEventListener("click", resetForm);
+els.shareResultButton?.addEventListener("click", shareCurrentResult);
+els.shareText?.addEventListener("click", function () {
+  if (!els.shareText.value) return;
+  els.shareText.select();
+  els.shareText.setSelectionRange(0, els.shareText.value.length);
+});
 els.closeRelease.addEventListener("click", closeReleaseNotes);
 els.refreshMyBookings?.addEventListener("click", loadMyBookings);
 els.myBookingsList?.addEventListener("click", handleMyBookingsClick);
@@ -948,8 +1086,15 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !els.reviewModal.hidden) closeReview();
 });
-showReleaseNotesOnce();
-loadProfile();
-loadMyBookings();
+const supportedBrowser = enforceSupportedBrowser();
+if (supportedBrowser) {
+  showReleaseNotesOnce();
+  fixIPhoneWideViewport();
+  window.visualViewport?.addEventListener("resize", fixIPhoneWideViewport);
+  loadProfile();
+  loadMyBookings();
+} else {
+  els.retrySupportedBrowser?.addEventListener("click", () => window.location.reload());
+}
 
 </script>
