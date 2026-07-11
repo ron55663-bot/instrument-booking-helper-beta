@@ -11,7 +11,7 @@
   "icons": [
     {
       "src": "assets/app-icon-beta.png",
-      "sizes": "1254x1254",
+      "sizes": "886x886",
       "type": "image/png",
       "purpose": "any maskable"
     }

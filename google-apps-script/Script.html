@@ -1,7 +1,7 @@
 <script>
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.2.1-beta";
-const APP_VERSION_LABEL = "V1.2.1 Beta";
+const APP_VERSION = "1.2.2-beta";
+const APP_VERSION_LABEL = "V1.2.2 Beta";
 const RELEASE_NOTES = [
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
@@ -25,6 +25,8 @@ const RELEASE_NOTES = [
   "新增「我的儀器」測試頁，可查看自己的借用與備取紀錄。",
   "新增取消借用測試流程：取消後同步釋出月行程表。",
   "新增人員權限表雛形，可限制特定帳號可借醫院、區域與儀器類別。",
+  "LINE 通知改為圖示化格式，並分開顯示借用與備取儀器。",
+  "更新 Beta 測試版 App 代表圖示。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 const GOOGLE_LOGIN_STORAGE_KEY = "instrument-helper-google-login";
@@ -784,7 +786,21 @@ async function confirmBooking() {
 
 function formatShareDate(date) {
   const parts = String(date || "").split("-");
-  return parts.length === 3 ? `${Number(parts[1])}/${Number(parts[2])}` : String(date || "");
+  if (parts.length !== 3) return String(date || "");
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  const weekday = weekdays[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `${month}/${day}（${weekday}）`;
+}
+
+function formatShareInstrumentName(name) {
+  const aliases = {
+    "Enstie X校正箱": "EnSite X 校正箱",
+    "Enstie P校正箱": "EnSite P 校正箱",
+  };
+  return aliases[name] || String(name || "");
 }
 
 function setShareText(text) {
@@ -793,33 +809,32 @@ function setShareText(text) {
 }
 
 function buildBookingShareText(payload) {
-  const booked = payload.instruments.filter((item) => item.requestType === "booking").map((item) => item.name);
-  const waitlisted = payload.instruments.filter((item) => item.requestType === "waitlist").map((item) => item.name);
-  const lines = [
-    "借用申請送出",
-    `日期：${formatShareDate(payload.date)}`,
-    `醫院：${payload.hospital}`,
-    `借用人：${payload.borrower}`,
-    `備註/手術內容：${payload.notes || "無"}`,
-    `借用：${booked.join("、") || "無"}`,
-  ];
-  if (waitlisted.length) lines.push(`備取：${waitlisted.join("、")}`);
-  lines.push("---App借用並完成自動更新---");
-  return lines.join("\n");
+  const booked = payload.instruments.filter((item) => item.requestType === "booking").map((item) => formatShareInstrumentName(item.name));
+  const waitlisted = payload.instruments.filter((item) => item.requestType === "waitlist").map((item) => formatShareInstrumentName(item.name));
+  return [
+    "【儀器借用通知】",
+    `📅 日期：${formatShareDate(payload.date)}`,
+    `🏥 醫院：${payload.hospital}`,
+    `👤 借用人：${payload.borrower}`,
+    `📝 手術內容：${payload.notes || "無"}`,
+    `📦 借用儀器：${booked.join("、") || "無"}`,
+    `📦 備取儀器：${waitlisted.join("、") || "無"}`,
+    "",
+    "✅ 已完成借用申請，系統已自動更新。",
+  ].join("\n");
 }
 
 function buildCancelShareText(group, result) {
-  const instruments = group.instruments.map((item) => item.instrumentName).filter(Boolean);
-  const promotions = (result.promotions || []).map((item) => item.hospital).filter(Boolean);
+  const instruments = group.instruments.map((item) => formatShareInstrumentName(item.instrumentName)).filter(Boolean);
+  const promotions = Array.from(new Set((result.promotions || []).map((item) => item.hospital).filter(Boolean)));
   return [
-    "---取消借用---",
-    `日期：${formatShareDate(group.date)}`,
-    `醫院：${group.hospital}`,
-    `借用人：${group.borrower}`,
-    `取消借用：${instruments.join("、") || "無"}`,
-    "",
-    `遞補備取：${promotions.join("、") || "無"}`,
-    "---App取消/遞補備取並完成自動更新---",
+    "【儀器取消借用通知】",
+    `📅 借用日期：${formatShareDate(group.date)}`,
+    `🏥 醫院：${group.hospital}`,
+    `👤 借用人：${group.borrower}`,
+    `❌ 取消借用：${instruments.join("、") || "無"}`,
+    `🏥 遞補備取醫院：${promotions.join("、") || "無"}`,
+    "✅ 已完成取消作業，系統已自動更新。",
   ].join("\n");
 }
 
