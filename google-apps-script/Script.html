@@ -1,7 +1,7 @@
 <script>
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.1.14-beta";
-const APP_VERSION_LABEL = "V1.1.14 Beta";
+const APP_VERSION = "1.2.0-beta";
+const APP_VERSION_LABEL = "V1.2.0 Beta";
 const RELEASE_NOTES = [
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
@@ -13,12 +13,22 @@ const RELEASE_NOTES = [
   "Facebook、LINE 等內建瀏覽器改為提示使用 Safari 或 Chrome。",
   "新增手動釋出排程後的自動檢查遞補與 LINE 分享通知文字。",
   "自動取消與遞補只處理 App 建立的借用；人工 key-in 排程維持人工檢查。",
+  "我的儀器新增 Google 帳戶登入按鈕，登入失敗時可直接切換公司帳號。",
+  "登入 API 加入逾時保護，避免帳號讀取失敗時畫面持續卡在讀取中。",
+  "我的儀器改為手動 Google 帳戶登入，避免開啟 App 時背景登入卡住。",
+  "成功登入一次後會記住此 App 的登入狀態，僅登出或帳戶失效時才重新要求登入。",
+  "修正 Apps Script 內嵌頁面阻擋 Google 登入視窗時，登入按鈕沒有反應的問題。",
+  "Google 登入改用瀏覽器原生連結；選擇公司帳戶後回到 App 即自動載入。",
+  "主畫面改為三個獨立分頁，並新增簡潔固定底部導覽列。",
+  "公司帳號登入後顯示使用者名稱、登入信箱與登出帳號按鈕。",
   "修正 Apps Script 公司登入版讀取登入帳號與我的借用失敗問題。",
   "新增「我的儀器」測試頁，可查看自己的借用與備取紀錄。",
   "新增取消借用測試流程：取消後同步釋出月行程表。",
   "新增人員權限表雛形，可限制特定帳號可借醫院、區域與儀器類別。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
+const GOOGLE_LOGIN_STORAGE_KEY = "instrument-helper-google-login";
+const APP_PAGE_IDS = ["booking-form", "status-panel", "my-instruments"];
 
 const HOSPITAL_GROUPS = [
   ["北區", [
@@ -166,12 +176,14 @@ const els = {
   shareResultButton: document.querySelector("#share-result-button"),
   chooseToday: document.querySelector("#choose-today"),
   todayLabel: document.querySelector("#today-label"),
-  statusDate: document.querySelector("#status-date"),
+  statusDatePicker: document.querySelector("#status-date-picker"),
   availableCount: document.querySelector("#available-count"),
   bookedCount: document.querySelector("#booked-count"),
   statusList: document.querySelector("#status-list"),
   profileEmail: document.querySelector("#profile-email"),
   profilePermission: document.querySelector("#profile-permission"),
+  googleLoginButton: document.querySelector("#google-login-button"),
+  googleLogoutButton: document.querySelector("#google-logout-button"),
   myBookingsList: document.querySelector("#my-bookings-list"),
   refreshMyBookings: document.querySelector("#refresh-my-bookings"),
   footerVersion: document.querySelector(".footer-version"),
@@ -367,9 +379,19 @@ function fixIPhoneWideViewport() {
 
 function runServer(functionName, ...args) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = window.setTimeout(() => {
+      finish(reject, new Error("登入驗證逾時，請按下方按鈕選擇公司 Google 帳戶後重新開啟。"));
+    }, 15000);
     google.script.run
-      .withSuccessHandler(resolve)
-      .withFailureHandler((error) => reject(new Error(error && error.message ? error.message : "Apps Script 執行失敗")))
+      .withSuccessHandler((result) => finish(resolve, result))
+      .withFailureHandler((error) => finish(reject, new Error(error && error.message ? error.message : "Apps Script 執行失敗")))
       [functionName](...args);
   });
 }
@@ -469,7 +491,7 @@ function renderStatus(instruments, date) {
   const available = instruments.filter((item) => item.available);
   els.availableCount.textContent = available.length;
   els.bookedCount.textContent = instruments.length - available.length;
-  els.statusDate.textContent = date.slice(5).replace("-", " / ");
+  if (els.statusDatePicker) els.statusDatePicker.value = date;
   els.statusList.innerHTML = instruments.map((item) => `
     <div class="status-item${item.available ? "" : " unavailable"}">
       <span class="instrument-symbol">${escapeHtml(item.code || "EQ")}</span>
@@ -856,7 +878,7 @@ function resetForm() {
   pendingPayload = null;
   renderInstrumentGroups([]);
   els.availabilityHint.textContent = "每個類別皆可複選；已借用的儀器仍可點選排隊備取。";
-  els.statusDate.textContent = "請選擇日期";
+  if (els.statusDatePicker) els.statusDatePicker.value = "";
   els.availableCount.textContent = "—";
   els.bookedCount.textContent = "—";
   els.statusList.innerHTML = `
@@ -908,13 +930,17 @@ function showReleaseNotesOnce() {
 function renderProfile(profile) {
   currentProfile = normalizeProfile(profile);
   if (!els.profileEmail) return;
-  els.profileEmail.textContent = currentProfile.email || "未取得公司帳號";
+  if (els.googleLoginButton) els.googleLoginButton.hidden = true;
+  if (els.googleLogoutButton) els.googleLogoutButton.hidden = false;
+  const displayName = currentProfile.name.trim() || currentProfile.email.split("@")[0] || "使用者";
+  els.profileEmail.textContent = `Hi ${displayName}`;
+  const loginLabel = currentProfile.email ? `已登入：${currentProfile.email}` : "公司帳號已登入";
   if (currentProfile.isAdmin) {
-    els.profilePermission.textContent = "管理者權限：可查看全部借用。";
+    els.profilePermission.textContent = `${loginLabel}・管理者權限：可查看全部借用。`;
   } else if (currentProfile.unrestricted || currentProfile.hospitals.includes("*")) {
-    els.profilePermission.textContent = "測試版目前全部開放；填寫人員權限表後會依帳號限制。";
+    els.profilePermission.textContent = `${loginLabel}・測試版目前全部開放。`;
   } else {
-    els.profilePermission.textContent = `可借醫院 ${currentProfile.hospitals.length} 項・區域：${currentProfile.regions.join("、")}。`;
+    els.profilePermission.textContent = `${loginLabel}・可借醫院 ${currentProfile.hospitals.length} 項・區域：${currentProfile.regions.join("、")}。`;
   }
 }
 
@@ -967,9 +993,82 @@ function renderMyBookings(bookings) {
 async function loadProfile() {
   try {
     renderProfile(await fetchProfile());
+    localStorage.setItem(GOOGLE_LOGIN_STORAGE_KEY, "1");
+    await loadMyBookings();
   } catch (error) {
+    localStorage.removeItem(GOOGLE_LOGIN_STORAGE_KEY);
     if (els.profileEmail) els.profileEmail.textContent = "無法讀取登入資訊";
     if (els.profilePermission) els.profilePermission.textContent = error.message;
+    if (els.googleLoginButton) {
+      els.googleLoginButton.hidden = false;
+      els.googleLoginButton.textContent = "使用 Google 帳戶登入";
+    }
+    if (els.googleLogoutButton) els.googleLogoutButton.hidden = true;
+  }
+}
+
+function buildGoogleAccountLoginUrl() {
+  const appUrl = new URL(CONFIG.googleAppsScriptUrl || window.location.href, window.location.href);
+  appUrl.searchParams.set("login", "1");
+  appUrl.hash = "my-instruments";
+  const chooser = new URL(["https:", "", "accounts.google.com", "AccountChooser"].join("/"));
+  chooser.searchParams.set("continue", appUrl.toString());
+  chooser.searchParams.set("hl", "zh-TW");
+  chooser.searchParams.set("service", "wise");
+  return chooser.toString();
+}
+
+function configureGoogleAccountLoginLink() {
+  if (!els.googleLoginButton) return;
+  els.googleLoginButton.href = "#my-instruments";
+  els.googleLoginButton.removeAttribute("target");
+}
+
+async function handleGoogleAccountLogin(event) {
+  event.preventDefault();
+  if (!els.googleLoginButton) return;
+  els.googleLoginButton.textContent = "正在登入…";
+  els.googleLoginButton.setAttribute("aria-disabled", "true");
+  await loadProfile();
+  els.googleLoginButton.removeAttribute("aria-disabled");
+  if (!currentProfile) els.googleLoginButton.textContent = "使用 Google 帳戶登入";
+}
+
+function getRequestedAppPage() {
+  const pageId = window.location.hash.replace(/^#/, "");
+  return APP_PAGE_IDS.includes(pageId) ? pageId : "booking-form";
+}
+
+function showAppPage(pageId, updateHistory = false) {
+  const activePage = APP_PAGE_IDS.includes(pageId) ? pageId : "booking-form";
+  document.documentElement.dataset.activePage = activePage;
+  document.querySelectorAll("[data-app-page]").forEach((section) => {
+    section.hidden = section.dataset.appPage !== activePage;
+  });
+  document.querySelectorAll(".page-tabs a").forEach((link) => {
+    const isActive = link.getAttribute("href") === `#${activePage}`;
+    link.classList.toggle("active", isActive);
+    if (isActive) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  if (updateHistory && window.location.hash !== `#${activePage}`) {
+    window.history.pushState({}, "", `#${activePage}`);
+  }
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function logoutAppAccount() {
+  localStorage.removeItem(GOOGLE_LOGIN_STORAGE_KEY);
+  currentProfile = null;
+  if (els.profileEmail) els.profileEmail.textContent = "尚未登入公司帳戶";
+  if (els.profilePermission) els.profilePermission.textContent = "請按下方按鈕選擇公司 Google 帳戶，再讀取你的借用與權限。";
+  if (els.googleLoginButton) {
+    els.googleLoginButton.hidden = false;
+    els.googleLoginButton.textContent = "使用 Google 帳戶登入";
+  }
+  if (els.googleLogoutButton) els.googleLogoutButton.hidden = true;
+  if (els.myBookingsList) {
+    els.myBookingsList.innerHTML = '<div class="empty-state compact"><p>登入後即可查看你的借用與備取紀錄</p></div>';
   }
 }
 
@@ -1023,6 +1122,7 @@ function escapeHtml(value) {
 }
 
 els.date.min = todayInTaipei();
+if (els.statusDatePicker) els.statusDatePicker.min = todayInTaipei();
 populateTimeOptions(els.deliveryTime);
 populateTimeOptions(els.pickupTime);
 els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
@@ -1033,6 +1133,10 @@ els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
   timeZone: "Asia/Taipei",
 }).format(new Date());
 els.date.addEventListener("change", handleDateChange);
+els.statusDatePicker?.addEventListener("change", () => {
+  els.date.value = els.statusDatePicker.value;
+  handleDateChange();
+});
 els.hospital.addEventListener("input", renderHospitalSuggestions);
 els.hospital.addEventListener("focus", () => {
   if (els.hospital.value.trim()) renderHospitalSuggestions();
@@ -1074,7 +1178,17 @@ els.shareText?.addEventListener("click", function () {
   els.shareText.setSelectionRange(0, els.shareText.value.length);
 });
 els.closeRelease.addEventListener("click", closeReleaseNotes);
-els.refreshMyBookings?.addEventListener("click", loadMyBookings);
+els.refreshMyBookings?.addEventListener("click", loadProfile);
+els.googleLogoutButton?.addEventListener("click", logoutAppAccount);
+els.googleLoginButton?.addEventListener("click", handleGoogleAccountLogin);
+document.querySelectorAll(".page-tabs a").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    showAppPage(link.getAttribute("href").slice(1), true);
+  });
+});
+window.addEventListener("popstate", () => showAppPage(getRequestedAppPage()));
+window.addEventListener("hashchange", () => showAppPage(getRequestedAppPage()));
 els.myBookingsList?.addEventListener("click", handleMyBookingsClick);
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".hospital-field")) hideHospitalSuggestions();
@@ -1088,11 +1202,17 @@ document.addEventListener("keydown", (event) => {
 });
 const supportedBrowser = enforceSupportedBrowser();
 if (supportedBrowser) {
+  showAppPage(getRequestedAppPage());
+  configureGoogleAccountLoginLink();
   showReleaseNotesOnce();
   fixIPhoneWideViewport();
   window.visualViewport?.addEventListener("resize", fixIPhoneWideViewport);
-  loadProfile();
-  loadMyBookings();
+  const loginRequested = new URLSearchParams(window.location.search).get("login") === "1";
+  const rememberedLogin = localStorage.getItem(GOOGLE_LOGIN_STORAGE_KEY) === "1";
+  if (loginRequested || rememberedLogin) {
+    window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    loadProfile();
+  }
 } else {
   els.retrySupportedBrowser?.addEventListener("click", () => window.location.reload());
 }

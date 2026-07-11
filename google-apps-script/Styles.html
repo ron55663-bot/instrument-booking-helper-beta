@@ -1889,6 +1889,35 @@ input,
   display: block;
 }
 
+.google-login-button {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid #c8d8d2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #14777a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.google-login-button:active {
+  background: #edf7f3;
+}
+
+.google-logout-button {
+  margin: 10px 0 0 8px;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: #6e827b;
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
 .profile-card strong {
   color: #243a35;
   font-size: 15px;
@@ -2418,4 +2447,116 @@ footer {
   line-height: 1;
 }
 
+/* V1.1.21：簡潔底部分頁導覽 */
+[data-app-page][hidden] {
+  display: none !important;
+}
+
+.app-shell {
+  padding-bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+}
+
+.page-tabs {
+  position: fixed;
+  z-index: 900;
+  right: auto;
+  bottom: 0;
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 760px);
+  max-width: 760px;
+  min-height: 66px;
+  margin: 0;
+  padding: 0 8px env(safe-area-inset-bottom, 0px);
+  overflow: visible;
+  transform: translateX(-50%);
+  border: 1px solid #d7e2de;
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -8px 24px rgba(31, 68, 59, 0.12);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.page-tabs a {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 62px;
+  padding: 8px 6px 7px;
+  place-content: center;
+  gap: 3px;
+  border: 0;
+  color: #72847e;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.page-tabs a svg {
+  width: 22px;
+  height: 22px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.page-tabs a:hover,
+.page-tabs a.active {
+  border: 0;
+  color: #0d6568;
+  background: transparent;
+}
+
+.page-tabs a.active::before {
+  position: absolute;
+  top: 0;
+  left: 28%;
+  width: 44%;
+  height: 4px;
+  border-radius: 0 0 4px 4px;
+  background: #0d6568;
+  content: "";
+}
+
+.content-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+  width: min(100%, 760px);
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.hero {
+  width: min(100%, 760px);
+  margin-inline: auto;
+}
+
+html[data-active-page="status-panel"] .status-panel,
+html[data-active-page="my-instruments"] .my-panel {
+  width: 100%;
+  min-height: calc(100svh - 190px);
+}
+
+@media (min-width: 761px) {
+  .page-tabs {
+    bottom: 16px;
+    border-bottom: 1px solid #d7e2de;
+    border-radius: 18px;
+  }
+
+  .app-shell {
+    padding-bottom: 104px;
+  }
+}
+
+.status-date-control { display: grid; gap: 3px; color: #71847e; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.status-date-control input { width: 142px; min-height: 42px; padding: 8px 10px; border: 1px solid #d7e2de; border-radius: 10px; background: #f7faf8; color: #173d35; font: inherit; font-size: 14px; letter-spacing: 0; }
+.google-login-button[hidden], .google-logout-button[hidden] { display: none !important; }
+@media (max-width: 420px) { .status-date-control input { width: 132px; } }
 </style>

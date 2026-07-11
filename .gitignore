@@ -1,1 +1,4 @@
 .DS_Store
+node_modules/
+.clasp.json
+同步 Apps Script.command

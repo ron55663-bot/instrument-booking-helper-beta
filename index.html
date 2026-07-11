@@ -46,15 +46,9 @@
           </div>
       </header>
 
-      <nav class="page-tabs" aria-label="工作台功能">
-        <a class="active" href="#booking-form">儀器借用申請</a>
-        <a href="#status-panel">借用排程總覽</a>
-        <a href="#my-instruments">我的儀器</a>
-      </nav>
-
       <div class="workspace">
         <main>
-          <section class="hero">
+          <section class="hero" data-app-page="booking-form">
           <div>
             <h1>儀器借用申請</h1>
             <p class="hero-copy">選擇借用日期與儀器，系統將自動檢查當日可借狀態。</p>
@@ -63,7 +57,7 @@
           </section>
 
           <div class="content-grid">
-          <section class="booking-card" aria-labelledby="form-title">
+          <section class="booking-card" aria-labelledby="form-title" data-app-page="booking-form">
           <div class="card-heading">
             <span class="step-badge">01</span>
             <div>
@@ -190,13 +184,16 @@
           </form>
           </section>
 
-          <aside id="status-panel" class="status-panel">
+          <aside id="status-panel" class="status-panel" data-app-page="status-panel" hidden>
             <div class="panel-heading">
               <div>
                 <p>DAILY STATUS</p>
                 <h2>當日儀器狀態</h2>
               </div>
-              <span id="status-date">請選擇日期</span>
+              <label class="status-date-control">
+                <span>排程日期</span>
+                <input id="status-date-picker" type="date" aria-label="選擇排程日期" />
+              </label>
             </div>
             <div class="status-summary">
               <div><span class="summary-dot available"></span><strong id="available-count">—</strong><small>可借用</small></div>
@@ -205,13 +202,13 @@
             <div id="status-list" class="status-list">
               <div class="empty-state">
                 <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
-                <p>從上方選擇日期<br />查看儀器排程</p>
+                <p>選擇日期<br />查看儀器排程</p>
               </div>
             </div>
             <p class="status-note"><i></i> 狀態會依 Google 試算表資料即時更新</p>
           </aside>
 
-          <section id="my-instruments" class="my-panel">
+          <section id="my-instruments" class="my-panel" data-app-page="my-instruments" hidden>
             <div class="panel-heading">
               <div>
                 <p>MY INSTRUMENTS</p>
@@ -222,14 +219,16 @@
             <div class="profile-card">
               <span class="summary-dot available"></span>
               <div>
-                <strong id="profile-email">讀取登入資訊中…</strong>
-                <small id="profile-permission">依公司帳號顯示你的借用與權限。</small>
+                <strong id="profile-email">尚未登入公司帳戶</strong>
+                <small id="profile-permission">請按下方按鈕選擇公司 Google 帳戶，再讀取你的借用與權限。</small>
+                <a id="google-login-button" class="google-login-button" href="#my-instruments">使用 Google 帳戶登入</a>
+                <button id="google-logout-button" class="google-logout-button" type="button" hidden>登出帳號</button>
               </div>
             </div>
             <div id="my-bookings-list" class="my-bookings-list">
               <div class="empty-state compact">
                 <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
-                <p>正在讀取我的借用…</p>
+                <p>登入後即可查看你的借用與備取紀錄</p>
               </div>
             </div>
             <p class="status-note"><i></i> 取消後將同步釋出月行程表，並自動遞補第一順位備取。</p>
@@ -238,16 +237,30 @@
         </main>
       </div>
       <footer id="help">
-        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.1.14 Beta</b></span>
+        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.2.0 Beta</b></span>
         <span class="footer-sync">資料同步至 Google 試算表</span>
       </footer>
+      <nav class="page-tabs" aria-label="工作台功能">
+        <a class="active" href="#booking-form" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          <span>借用</span>
+        </a>
+        <a href="#status-panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
+          <span>排程</span>
+        </a>
+        <a href="#my-instruments">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+          <span>我的</span>
+        </a>
+      </nav>
     </div>
 
     <div id="release-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="release-title" hidden>
       <div class="review-modal release-modal">
         <div class="review-heading">
           <div>
-            <p>WHAT'S NEW・<span id="release-version">V1.1.14 Beta</span></p>
+            <p>WHAT'S NEW・<span id="release-version">V1.2.0 Beta</span></p>
             <h2 id="release-title">版本更新內容</h2>
           </div>
         </div>
