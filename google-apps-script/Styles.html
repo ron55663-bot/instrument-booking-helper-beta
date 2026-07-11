@@ -1499,6 +1499,15 @@ footer {
   color: #334a45;
   font-size: 13px;
   line-height: 1.65;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.release-modal {
+  display: flex;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  flex-direction: column;
 }
 
 .release-notes li::marker {
@@ -1506,6 +1515,7 @@ footer {
 }
 
 .release-actions {
+  flex: none;
   padding: 15px 20px 18px;
   border-top: 1px solid #d9dfdb;
   background: #f8faf7;
