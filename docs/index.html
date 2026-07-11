@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#14864a" />
+    <meta name="application-name" content="儀器借用" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="儀器借用" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="assets/app-icon-beta.png?v=122" />
+    <link rel="apple-touch-icon" sizes="886x886" href="assets/app-icon-beta.png?v=122" />
+    <title>儀器借用</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", sans-serif;
+        background: #f4f8f3;
+        color: #173d35;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100svh;
+        margin: 0;
+        padding: max(28px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
+        background:
+          radial-gradient(circle at 50% 5%, rgba(84, 190, 94, .22), transparent 42%),
+          #f4f8f3;
+      }
+
+      main {
+        display: grid;
+        width: min(100%, 440px);
+        min-height: calc(100svh - 56px);
+        margin: auto;
+        align-content: center;
+        gap: 20px;
+      }
+
+      .card {
+        padding: 26px 22px;
+        border: 1px solid #d7e4dc;
+        border-radius: 26px;
+        background: rgba(255, 255, 255, .94);
+        text-align: center;
+        box-shadow: 0 18px 48px rgba(28, 81, 55, .12);
+      }
+
+      .app-icon {
+        display: block;
+        width: 132px;
+        height: 132px;
+        margin: 0 auto 18px;
+        border-radius: 28px;
+        object-fit: cover;
+        box-shadow: 0 12px 30px rgba(18, 96, 52, .2);
+      }
+
+      .eyebrow {
+        margin: 0 0 6px;
+        color: #14864a;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: .15em;
+      }
+
+      h1 { margin: 0; font-size: 30px; }
+      .intro { margin: 10px 0 20px; color: #657a71; line-height: 1.65; }
+
+      .open-button {
+        display: grid;
+        min-height: 54px;
+        place-items: center;
+        border-radius: 15px;
+        background: #14864a;
+        color: white;
+        font-size: 17px;
+        font-weight: 800;
+        text-decoration: none;
+        box-shadow: 0 8px 18px rgba(20, 134, 74, .22);
+      }
+
+      .install {
+        margin-top: 20px;
+        padding: 16px;
+        border-radius: 16px;
+        background: #f0f7f2;
+        color: #415d53;
+        font-size: 14px;
+        line-height: 1.7;
+        text-align: left;
+      }
+
+      .install strong { color: #173d35; }
+      .install ol { margin: 7px 0 0; padding-left: 22px; }
+      .footnote { margin: 0; color: #809089; font-size: 12px; text-align: center; }
+
+      .launching .install, .launching .open-button { display: none; }
+      .launching .intro::after { content: "正在開啟公司正式版…"; display: block; margin-top: 12px; color: #14864a; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <img class="app-icon" src="assets/app-icon-beta.png?v=122" alt="儀器借用 App 圖示" />
+        <p class="eyebrow">EQUIPMENT BOOKING</p>
+        <h1>儀器借用</h1>
+        <p class="intro">公司儀器借用、排程與備取管理</p>
+        <a class="open-button" href="https://script.google.com/a/macros/silverbell.com.tw/s/AKfycbw7gJ3JR0Gj98V3wXP9JLhLEoqYvwu3OY8md5C4l4CZabJ0Aqa9wTsIEH6ru1MP_OX-DQ/exec">開啟公司正式版</a>
+        <div class="install">
+          <strong>iPhone／iPad 加入主畫面</strong>
+          <ol>
+            <li>點 Safari 下方的「分享」按鈕。</li>
+            <li>選擇「加入主畫面」。</li>
+            <li>確認名稱為「儀器借用」後按「加入」。</li>
+          </ol>
+        </div>
+      </section>
+      <p class="footnote">首次開啟請使用公司 Google 帳號登入</p>
+    </main>
+    <script>
+      const APP_URL = "https:" + "//" + "script.google.com/a/macros/silverbell.com.tw/s/AKfycbw7gJ3JR0Gj98V3wXP9JLhLEoqYvwu3OY8md5C4l4CZabJ0Aqa9wTsIEH6ru1MP_OX-DQ/exec";
+      const isStandalone = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+      if (isStandalone) {
+        document.documentElement.classList.add("launching");
+        window.setTimeout(() => window.location.replace(APP_URL), 350);
+      }
+    </script>
+  </body>
+</html>
