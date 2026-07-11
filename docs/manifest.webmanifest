@@ -1,0 +1,19 @@
+{
+  "name": "儀器借用",
+  "short_name": "儀器借用",
+  "description": "公司儀器借用 App 啟動器",
+  "lang": "zh-TW",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f8f3",
+  "theme_color": "#14864a",
+  "icons": [
+    {
+      "src": "assets/app-icon-beta.png?v=122",
+      "sizes": "886x886",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
