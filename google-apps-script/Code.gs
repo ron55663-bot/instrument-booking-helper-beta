@@ -254,6 +254,13 @@ function doGet(e) {
       return jsonResponse({ success: true, bookings: getMyBookings() });
     }
 
+    if (e.parameter.action === "scheduleMonth") {
+      return jsonResponse({ success: true, schedule: getInstrumentMonthSchedule(
+        sanitizeText(e.parameter.month, 7),
+        sanitizeText(e.parameter.instrumentId, 120)
+      ) });
+    }
+
     if (e.parameter.action !== "availability") throw new Error("未知的查詢動作。");
 
     const date = sanitizeText(e.parameter.date, 10);
@@ -294,6 +301,11 @@ function apiGetMyBookings() {
 function apiGetAvailability(date) {
   assertValidDate(date);
   return { success: true, instruments: getAvailability(date) };
+}
+
+function apiGetInstrumentMonthSchedule(month, instrumentId) {
+  getActiveUserEmail();
+  return { success: true, schedule: getInstrumentMonthSchedule(month, instrumentId) };
 }
 
 function apiSubmitBooking(data) {
@@ -560,6 +572,91 @@ function getAvailability(date) {
         scheduleRow: scheduleMissing ? null : baseIndex + 1,
       };
     });
+}
+
+function getInstrumentMonthSchedule(month, instrumentId) {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ""))) throw new Error("月份格式不正確。");
+  const parts = month.split("-").map(Number);
+  const year = parts[0];
+  const monthNumber = parts[1];
+  if (year < 2020 || year > 2100 || monthNumber < 1 || monthNumber > 12) throw new Error("月份超出可查詢範圍。");
+
+  const instrumentSheet = getRequiredSheet(INSTRUMENTS_SHEET);
+  ensureInstrumentsSheetSchema(instrumentSheet);
+  const instrumentValues = instrumentSheet.getDataRange().getDisplayValues();
+  const instrumentHeaders = instrumentValues[0] || [];
+  const instrumentRow = instrumentValues.slice(1).find(function (row) {
+    return String(row[0]) === instrumentId && row[4] !== "FALSE";
+  });
+  if (!instrumentRow) throw new Error("找不到可借用儀器。");
+  const instrument = {
+    id: String(instrumentRow[0]),
+    name: String(instrumentRow[1]),
+    category: String(instrumentRow[2] || "儀器設備"),
+    code: String(instrumentRow[3] || "EQ"),
+    region: instrumentHeaders.indexOf("區域劃分") >= 0 ? String(instrumentRow[instrumentHeaders.indexOf("區域劃分")] || "") : "",
+  };
+
+  const bookingSheet = getRequiredSheet(BOOKINGS_SHEET);
+  ensureBookingsSheetSchema(bookingSheet);
+  const bookingValues = bookingSheet.getDataRange().getDisplayValues();
+  const headers = bookingValues[0] || [];
+  const grouped = {};
+  bookingValues.slice(1).forEach(function (row) {
+    const date = normalizeDate(getCell(row, headers, "借用日期"));
+    const id = getCell(row, headers, "系統識別碼") || getCell(row, headers, "儀器編號");
+    const status = getCell(row, headers, "狀態");
+    if (date.slice(0, 7) !== month || id !== instrumentId || (status !== "已預約" && status !== "備取中")) return;
+    if (!grouped[date]) grouped[date] = { booked: [], waitlist: [] };
+    const record = {
+      hospital: getCell(row, headers, "借用醫院"),
+      borrower: getCell(row, headers, "借用人"),
+      notes: getCell(row, headers, "備註／手術內容"),
+      deliveryTime: getCell(row, headers, "送達時間"),
+      pickupTime: getCell(row, headers, "取回時間"),
+    };
+    if (status === "已預約") grouped[date].booked.push(record);
+    if (status === "備取中") {
+      record.order = grouped[date].waitlist.length + 1;
+      grouped[date].waitlist.push(record);
+    }
+  });
+
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const scheduleSheet = getSpreadsheet().getSheetByName(("0" + monthNumber).slice(-2) + SCHEDULE_SHEET_SUFFIX);
+  let scheduleRows = null;
+  let baseIndex = -1;
+  if (scheduleSheet) {
+    const lastRow = scheduleSheet.getLastRow();
+    const fixedRows = scheduleSheet.getRange(1, 1, lastRow, 5).getDisplayValues();
+    baseIndex = findScheduleBaseRowIndex(fixedRows, instrument.name);
+    if (baseIndex >= 0) {
+      scheduleRows = scheduleSheet.getRange(baseIndex + 1, SCHEDULE_FIRST_DATE_COLUMN, 2, daysInMonth * SCHEDULE_DATE_BLOCK_WIDTH).getDisplayValues();
+    }
+  }
+
+  const days = {};
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = month + "-" + ("0" + day).slice(-2);
+    const records = grouped[date] || { booked: [], waitlist: [] };
+    const offset = (day - 1) * SCHEDULE_DATE_BLOCK_WIDTH;
+    const scheduleHospital = scheduleRows ? sanitizeText((scheduleRows[1] || [])[offset], 100) : "";
+    if (scheduleHospital && !records.booked.length) {
+      records.booked.push({
+        hospital: scheduleHospital,
+        borrower: "",
+        notes: "人工排程（詳細資料請查月行程表）",
+        deliveryTime: "",
+        pickupTime: "",
+      });
+    }
+    days[date] = {
+      available: records.booked.length === 0 && !scheduleHospital,
+      booked: records.booked,
+      waitlist: records.waitlist,
+    };
+  }
+  return { month: month, instrument: instrument, days: days };
 }
 
 function getScheduleWaitlistCount(note) {

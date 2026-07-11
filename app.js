@@ -1,6 +1,6 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.2.2-beta";
-const APP_VERSION_LABEL = "V1.2.2 Beta";
+const APP_VERSION = "1.3.0-beta";
+const APP_VERSION_LABEL = "V1.3.0 Beta";
 const RELEASE_NOTES = [
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
@@ -26,6 +26,7 @@ const RELEASE_NOTES = [
   "新增人員權限表雛形，可限制特定帳號可借醫院、區域與儀器類別。",
   "LINE 通知改為圖示化格式，並分開顯示借用與備取儀器。",
   "更新 Beta 測試版 App 代表圖示。",
+  "排程頁升級為儀器月曆，可查看正式借用、備取順序並直接開始借用。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 const GOOGLE_LOGIN_STORAGE_KEY = "instrument-helper-google-login";
@@ -177,10 +178,14 @@ const els = {
   shareResultButton: document.querySelector("#share-result-button"),
   chooseToday: document.querySelector("#choose-today"),
   todayLabel: document.querySelector("#today-label"),
-  statusDatePicker: document.querySelector("#status-date-picker"),
-  availableCount: document.querySelector("#available-count"),
-  bookedCount: document.querySelector("#booked-count"),
-  statusList: document.querySelector("#status-list"),
+  calendarInstrument: document.querySelector("#calendar-instrument-select"),
+  calendarPrev: document.querySelector("#calendar-prev-month"),
+  calendarNext: document.querySelector("#calendar-next-month"),
+  calendarToday: document.querySelector("#calendar-today"),
+  calendarMonthLabel: document.querySelector("#calendar-month-label"),
+  calendarGrid: document.querySelector("#calendar-grid"),
+  calendarLoading: document.querySelector("#calendar-loading"),
+  calendarDetail: document.querySelector("#calendar-detail"),
   profileEmail: document.querySelector("#profile-email"),
   profilePermission: document.querySelector("#profile-permission"),
   googleLoginButton: document.querySelector("#google-login-button"),
@@ -205,6 +210,9 @@ let hospitalSuggestionIndex = -1;
 let currentProfile = null;
 let myBookingsCache = [];
 let currentShareText = "";
+let calendarMonth = todayInTaipei().slice(0, 7);
+let calendarSelectedDate = "";
+let calendarSchedule = null;
 
 function normalizeHospitalName(value) {
   return String(value || "")
@@ -353,7 +361,7 @@ function getApiBaseUrl() {
 }
 
 function isDemoMode() {
-  return CONFIG.demoMode || !getApiBaseUrl();
+  return new URLSearchParams(window.location.search).get("demo") === "1" || CONFIG.demoMode || !getApiBaseUrl();
 }
 
 function canUseGoogleScriptRun() {
@@ -479,30 +487,157 @@ async function requestCancelBooking(bookingId) {
   return result;
 }
 
-function getDemoInstruments() {
+function getDemoInstruments(date = "") {
+  const day = Number(String(date).slice(-2)) || 1;
+  const booked = day % 4 === 2;
   return DEMO_INSTRUMENTS.map((instrument) => ({
     ...instrument,
-    available: true,
-    waitlistCount: 0,
-    borrowedHospital: "",
+    available: !booked,
+    waitlistCount: day % 7 === 0 ? 1 : 0,
+    borrowedHospital: booked ? (day % 8 === 2 ? "南辦" : "中國醫") : "",
   }));
 }
 
-function renderStatus(instruments, date) {
-  const available = instruments.filter((item) => item.available);
-  els.availableCount.textContent = available.length;
-  els.bookedCount.textContent = instruments.length - available.length;
-  if (els.statusDatePicker) els.statusDatePicker.value = date;
-  els.statusList.innerHTML = instruments.map((item) => `
-    <div class="status-item${item.available ? "" : " unavailable"}">
-      <span class="instrument-symbol">${escapeHtml(item.code || "EQ")}</span>
-      <span>
-        <strong>${escapeHtml(item.name)}</strong>
-        <small>${escapeHtml(item.category || "儀器設備")}${item.available || !item.borrowedHospital ? "" : `・${escapeHtml(item.borrowedHospital)}借用`}</small>
-      </span>
-      <span class="status-pill">${item.scheduleMissing ? "未對應" : item.available ? "可借" : "可備取"}</span>
-    </div>
-  `).join("");
+function populateCalendarInstruments() {
+  if (!els.calendarInstrument) return;
+  const groups = INSTRUMENT_CATALOG.map(([category, code, names]) => {
+    const options = names.map((name) => {
+      const id = `${code}-${name}`;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(getInstrumentLabel({ id, name: formatShareInstrumentName(name) }))}</option>`;
+    }).join("");
+    return `<optgroup label="${escapeHtml(category)}">${options}</optgroup>`;
+  }).join("");
+  els.calendarInstrument.innerHTML = `<option value="">請選擇儀器</option>${groups}`;
+}
+
+function buildDemoMonthSchedule(month, instrumentId) {
+  const instrument = DEMO_INSTRUMENTS.find((item) => item.id === instrumentId);
+  const [year, monthNumber] = month.split("-").map(Number);
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const days = {};
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${month}-${String(day).padStart(2, "0")}`;
+    const booked = day % 4 === 2;
+    const waitlisted = day % 7 === 0;
+    days[date] = {
+      available: !booked,
+      booked: booked ? [{ hospital: day % 8 === 2 ? "南辦" : "中國醫", borrower: booked && day % 8 === 2 ? "Jeff Wang" : "Billy", notes: day % 3 ? "AF 使用" : "" }] : [],
+      waitlist: waitlisted ? [{ hospital: "中榮", borrower: "Ron", notes: "心律不整電燒手術", order: 1 }] : [],
+    };
+  }
+  return { month, instrument: instrument || { id: instrumentId, name: instrumentId }, days };
+}
+
+async function fetchInstrumentMonthSchedule(month, instrumentId) {
+  if (isDemoMode()) return buildDemoMonthSchedule(month, instrumentId);
+  if (canUseGoogleScriptRun()) {
+    const result = await runServer("apiGetInstrumentMonthSchedule", month, instrumentId);
+    if (!result.success) throw new Error(result.message || "無法取得月曆排程");
+    return result.schedule;
+  }
+  const url = getApiBaseUrl();
+  url.searchParams.set("action", "scheduleMonth");
+  url.searchParams.set("month", month);
+  url.searchParams.set("instrumentId", instrumentId);
+  const response = await fetch(url);
+  const result = await response.json();
+  if (!response.ok || !result.success) throw new Error(result.message || "無法取得月曆排程");
+  return result.schedule;
+}
+
+function changeCalendarMonth(offset) {
+  const [year, month] = calendarMonth.split("-").map(Number);
+  const target = new Date(year, month - 1 + offset, 1);
+  calendarMonth = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`;
+  calendarSelectedDate = "";
+  loadCalendarSchedule();
+}
+
+function renderCalendar() {
+  if (!els.calendarGrid) return;
+  const [year, month] = calendarMonth.split("-").map(Number);
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const previousDays = new Date(year, month - 1, 0).getDate();
+  const today = todayInTaipei();
+  els.calendarMonthLabel.textContent = `${year} 年 ${month} 月`;
+  const cells = [];
+  for (let index = 0; index < 42; index += 1) {
+    const day = index - firstWeekday + 1;
+    if (day < 1 || day > daysInMonth) {
+      const label = day < 1 ? previousDays + day : day - daysInMonth;
+      cells.push(`<button class="calendar-day outside" type="button" disabled><span class="calendar-day-number">${label}</span></button>`);
+      continue;
+    }
+    const date = `${calendarMonth}-${String(day).padStart(2, "0")}`;
+    const state = calendarSchedule?.days?.[date];
+    const dot = els.calendarInstrument.value && state ? `<i class="calendar-dot ${state.available ? "available" : "booked"}" aria-label="${state.available ? "可借用" : "已借用，可備取"}"></i>` : "";
+    const classes = ["calendar-day", date === calendarSelectedDate ? "selected" : "", date === today ? "today" : ""].filter(Boolean).join(" ");
+    cells.push(`<button class="${classes}" type="button" data-date="${date}"><span class="calendar-day-number">${day}</span>${dot}</button>`);
+  }
+  els.calendarGrid.innerHTML = cells.join("");
+  renderCalendarDetail();
+}
+
+function renderCalendarRecords(records, type) {
+  if (!records?.length) return `<div class="calendar-detail-item"><span>${type === "booked" ? "目前無借用醫院" : "目前無備取醫院"}</span></div>`;
+  return records.map((item, index) => `<div class="calendar-detail-item"><strong>${type === "waitlist" ? `${item.order || index + 1}. ` : ""}${escapeHtml(item.hospital || "未填寫醫院")}｜${escapeHtml(item.borrower || "未填寫借用人")}</strong><span>${escapeHtml(item.notes || "無手術內容或備註")}</span>${item.deliveryTime || item.pickupTime ? `<small>${escapeHtml(item.deliveryTime || "—")} 送達／${escapeHtml(item.pickupTime || "—")} 取回</small>` : ""}</div>`).join("");
+}
+
+function renderCalendarDetail() {
+  if (!els.calendarDetail) return;
+  const instrument = calendarSchedule?.instrument;
+  if (!els.calendarInstrument.value) {
+    els.calendarDetail.innerHTML = '<div class="calendar-detail-empty">請先選擇儀器，再點選日期查看排程。</div>';
+    return;
+  }
+  if (!calendarSelectedDate) {
+    els.calendarDetail.innerHTML = '<div class="calendar-detail-empty">請點選月曆日期查看借用與備取資料。</div>';
+    return;
+  }
+  const state = calendarSchedule?.days?.[calendarSelectedDate] || { available: true, booked: [], waitlist: [] };
+  const [, month, day] = calendarSelectedDate.split("-").map(Number);
+  els.calendarDetail.innerHTML = `<div class="calendar-detail-head"><h3>${month} 月 ${day} 日｜${escapeHtml(formatShareInstrumentName(instrument?.name || ""))}</h3><span><i class="calendar-dot ${state.available ? "available" : "booked"}"></i>${state.available ? "可借用" : "已借用，可登記備取"}</span></div><div class="calendar-detail-body"><div class="calendar-detail-group"><h4>🟢 正式借用</h4>${renderCalendarRecords(state.booked, "booked")}</div><div class="calendar-detail-group"><h4>🟠 備取名單</h4>${renderCalendarRecords(state.waitlist, "waitlist")}</div></div><div class="calendar-detail-actions"><button id="calendar-start-booking" class="calendar-start-button" type="button">＋ 開始借用</button></div>`;
+}
+
+async function loadCalendarSchedule() {
+  renderCalendar();
+  if (!els.calendarInstrument?.value) {
+    calendarSchedule = null;
+    renderCalendar();
+    return;
+  }
+  els.calendarLoading.hidden = false;
+  try {
+    calendarSchedule = await fetchInstrumentMonthSchedule(calendarMonth, els.calendarInstrument.value);
+  } catch (error) {
+    calendarSchedule = null;
+    els.calendarDetail.innerHTML = `<div class="form-message error">${escapeHtml(error.message)}</div>`;
+  } finally {
+    els.calendarLoading.hidden = true;
+    renderCalendar();
+  }
+}
+
+async function startBookingFromCalendar() {
+  if (!calendarSelectedDate || !els.calendarInstrument.value) return;
+  const instrumentId = els.calendarInstrument.value;
+  els.date.value = calendarSelectedDate;
+  els.borrower.value = "";
+  els.hospital.value = "";
+  els.deliveryTime.value = "";
+  els.pickupTime.value = "";
+  els.notes.value = "";
+  els.notesCount.textContent = "0";
+  await handleDateChange();
+  const instrument = currentInstruments.find((item) => item.id === instrumentId);
+  if (instrument) {
+    selectedInstrumentIds = new Set([instrument.id]);
+    openCategory = instrument.category;
+    renderInstrumentGroups(currentInstruments);
+    updateAvailabilityHint();
+  }
+  showAppPage("booking-form", true);
 }
 
 async function fetchAvailability(date) {
@@ -638,7 +773,6 @@ async function handleDateChange() {
   try {
     currentInstruments = await fetchAvailability(els.date.value);
     renderInstrumentGroups(currentInstruments);
-    renderStatus(currentInstruments, els.date.value);
     updateAvailabilityHint();
   } catch (error) {
     currentInstruments = [];
@@ -892,15 +1026,6 @@ function resetForm() {
   pendingPayload = null;
   renderInstrumentGroups([]);
   els.availabilityHint.textContent = "每個類別皆可複選；已借用的儀器仍可點選排隊備取。";
-  if (els.statusDatePicker) els.statusDatePicker.value = "";
-  els.availableCount.textContent = "—";
-  els.bookedCount.textContent = "—";
-  els.statusList.innerHTML = `
-    <div class="empty-state">
-      <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
-      <p>從上方選擇日期<br>查看儀器排程</p>
-    </div>
-  `;
   els.notesCount.textContent = "0";
   els.successModal.hidden = true;
   currentShareText = "";
@@ -1136,7 +1261,6 @@ function escapeHtml(value) {
 }
 
 els.date.min = todayInTaipei();
-if (els.statusDatePicker) els.statusDatePicker.min = todayInTaipei();
 populateTimeOptions(els.deliveryTime);
 populateTimeOptions(els.pickupTime);
 els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
@@ -1147,10 +1271,12 @@ els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
   timeZone: "Asia/Taipei",
 }).format(new Date());
 els.date.addEventListener("change", handleDateChange);
-els.statusDatePicker?.addEventListener("change", () => {
-  els.date.value = els.statusDatePicker.value;
-  handleDateChange();
-});
+els.calendarInstrument?.addEventListener("change", () => { calendarSelectedDate = ""; loadCalendarSchedule(); });
+els.calendarPrev?.addEventListener("click", () => changeCalendarMonth(-1));
+els.calendarNext?.addEventListener("click", () => changeCalendarMonth(1));
+els.calendarToday?.addEventListener("click", () => { calendarMonth = todayInTaipei().slice(0, 7); calendarSelectedDate = todayInTaipei(); loadCalendarSchedule(); });
+els.calendarGrid?.addEventListener("click", (event) => { const button = event.target.closest("[data-date]"); if (!button) return; calendarSelectedDate = button.dataset.date; renderCalendar(); });
+els.calendarDetail?.addEventListener("click", (event) => { if (event.target.closest("#calendar-start-booking")) startBookingFromCalendar(); });
 els.hospital.addEventListener("input", renderHospitalSuggestions);
 els.hospital.addEventListener("focus", () => {
   if (els.hospital.value.trim()) renderHospitalSuggestions();
@@ -1216,6 +1342,8 @@ document.addEventListener("keydown", (event) => {
 });
 const supportedBrowser = enforceSupportedBrowser();
 if (supportedBrowser) {
+  populateCalendarInstruments();
+  renderCalendar();
   showAppPage(getRequestedAppPage());
   configureGoogleAccountLoginLink();
   showReleaseNotesOnce();
