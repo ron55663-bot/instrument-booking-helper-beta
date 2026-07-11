@@ -1,6 +1,6 @@
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.2.0-beta";
-const APP_VERSION_LABEL = "V1.2.0 Beta";
+const APP_VERSION = "1.2.1-beta";
+const APP_VERSION_LABEL = "V1.2.1 Beta";
 const RELEASE_NOTES = [
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
@@ -908,7 +908,7 @@ function showReleaseNotesOnce() {
   const forcePreview = new URLSearchParams(window.location.search).get("previewRelease") === "1";
   els.footerVersion.textContent = versionLabel;
   els.releaseVersion.textContent = versionLabel;
-  els.releaseNotes.innerHTML = RELEASE_NOTES
+  els.releaseNotes.innerHTML = RELEASE_NOTES.slice(-10)
     .map((note) => `<li>${escapeHtml(note)}</li>`)
     .join("");
 
