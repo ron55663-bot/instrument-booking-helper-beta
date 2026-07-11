@@ -7,8 +7,9 @@
     <meta name="application-name" content="儀器借用小幫手" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="儀器借用" />
-    <link rel="icon" type="image/png" href="https://ron55663-bot.github.io/instrument-booking-helper-beta/assets/app-icon-beta.png?v=122" />
-    <link rel="apple-touch-icon" href="https://ron55663-bot.github.io/instrument-booking-helper-beta/assets/app-icon-beta.png?v=122" />
+    <link rel="icon" type="image/png" sizes="192x192" href="https://ron55663-bot.github.io/instrument-booking-helper-beta/assets/app-icon-192.png?v=130" />
+    <link rel="apple-touch-icon" sizes="180x180" href="https://ron55663-bot.github.io/instrument-booking-helper-beta/assets/apple-touch-icon.png?v=130" />
+    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="https://ron55663-bot.github.io/instrument-booking-helper-beta/assets/apple-touch-icon.png?v=130" />
     <title>儀器借用幫手</title>    <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -183,27 +184,35 @@
           </section>
 
           <aside id="status-panel" class="status-panel" data-app-page="status-panel" hidden>
-            <div class="panel-heading">
+            <div class="calendar-heading">
               <div>
-                <p>DAILY STATUS</p>
-                <h2>當日儀器狀態</h2>
+                <p>SCHEDULE CALENDAR</p>
+                <h2>排程查詢</h2>
               </div>
-              <label class="status-date-control">
-                <span>排程日期</span>
-                <input id="status-date-picker" type="date" aria-label="選擇排程日期" />
+              <label class="calendar-instrument-field">
+                <span>儀器選擇</span>
+                <select id="calendar-instrument-select" aria-label="選擇查詢儀器">
+                  <option value="">請選擇儀器</option>
+                </select>
               </label>
             </div>
-            <div class="status-summary">
-              <div><span class="summary-dot available"></span><strong id="available-count">—</strong><small>可借用</small></div>
-              <div><span class="summary-dot booked"></span><strong id="booked-count">—</strong><small>已借用</small></div>
+            <div class="calendar-toolbar">
+              <button id="calendar-prev-month" type="button" aria-label="上一個月">‹ 上一個月</button>
+              <button id="calendar-today" type="button">回到今天</button>
+              <button id="calendar-next-month" type="button" aria-label="下一個月">下一個月 ›</button>
             </div>
-            <div id="status-list" class="status-list">
-              <div class="empty-state">
-                <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
-                <p>選擇日期<br />查看儀器排程</p>
-              </div>
+            <h3 id="calendar-month-label" class="calendar-month-label"></h3>
+            <div class="calendar-legend" aria-label="排程狀態圖例">
+              <span><i class="calendar-dot available"></i>可借用</span>
+              <span><i class="calendar-dot booked"></i>已借用，可登記備取</span>
             </div>
-            <p class="status-note"><i></i> 狀態會依 Google 試算表資料即時更新</p>
+            <div class="calendar-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+            <div id="calendar-grid" class="calendar-grid" aria-label="月曆"></div>
+            <div id="calendar-loading" class="calendar-loading" hidden>正在讀取 Google 試算表排程…</div>
+            <section id="calendar-detail" class="calendar-detail" aria-live="polite">
+              <div class="calendar-detail-empty">請先選擇儀器，再點選日期查看排程。</div>
+            </section>
+            <p class="status-note"><i></i> 狀態依 Google 試算表有效借用資料即時更新；已取消紀錄不會占用儀器。</p>
           </aside>
 
           <section id="my-instruments" class="my-panel" data-app-page="my-instruments" hidden>
@@ -235,7 +244,7 @@
         </main>
       </div>
       <footer id="help">
-        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.2.2 Beta</b></span>
+        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.3.0 Beta</b></span>
         <span class="footer-sync">資料同步至 Google 試算表</span>
       </footer>
       <nav class="page-tabs" aria-label="工作台功能">
@@ -258,7 +267,7 @@
       <div class="review-modal release-modal">
         <div class="review-heading">
           <div>
-            <p>WHAT'S NEW・<span id="release-version">V1.2.2 Beta</span></p>
+            <p>WHAT'S NEW・<span id="release-version">V1.3.0 Beta</span></p>
             <h2 id="release-title">版本更新內容</h2>
           </div>
         </div>
