@@ -17,9 +17,18 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=1.1.6-beta" />
+    <link rel="stylesheet" href="styles.css?v=1.1.7-beta" />
   </head>
   <body>
+    <section class="unsupported-browser-notice" id="unsupported-browser-notice" hidden role="alertdialog" aria-modal="true" aria-labelledby="unsupported-browser-title">
+      <div class="unsupported-browser-card">
+        <span class="unsupported-browser-icon" aria-hidden="true">↗</span>
+        <p>請使用正式瀏覽器</p>
+        <h1 id="unsupported-browser-title">請在 Safari 或 Chrome 開啟</h1>
+        <p class="unsupported-browser-copy">Facebook、LINE 等內建瀏覽器可能改變頁面比例，為確保借用資料正確送出，請改用 Safari／Chrome，或從主畫面的「儀器借用」圖示開啟。</p>
+        <button type="button" id="retry-supported-browser">我已改用 Safari／Chrome</button>
+      </div>
+    </section>
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="#" aria-label="儀器借用工作台首頁">
@@ -223,13 +232,13 @@
                 <p>正在讀取我的借用…</p>
               </div>
             </div>
-            <p class="status-note"><i></i> 測試版取消功能會先送出「申請取消」，不會直接刪除排程。</p>
+            <p class="status-note"><i></i> 取消後將同步釋出月行程表，並自動遞補第一順位備取。</p>
           </section>
           </div>
         </main>
       </div>
       <footer id="help">
-        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.1.6 Beta</b></span>
+        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.1.14 Beta</b></span>
         <span class="footer-sync">資料同步至 Google 試算表</span>
       </footer>
     </div>
@@ -238,7 +247,7 @@
       <div class="review-modal release-modal">
         <div class="review-heading">
           <div>
-            <p>WHAT'S NEW・<span id="release-version">V1.1.6 Beta</span></p>
+            <p>WHAT'S NEW・<span id="release-version">V1.1.14 Beta</span></p>
             <h2 id="release-title">版本更新內容</h2>
           </div>
         </div>
@@ -277,11 +286,13 @@
         <p>REQUEST RECEIVED</p>
         <h2 id="success-title">借用申請已送出</h2>
         <div id="success-summary" class="success-summary"></div>
+        <textarea id="share-text" class="share-text" readonly aria-label="可分享的借用通知文字"></textarea>
+        <button id="share-result-button" class="share-result-button" type="button">分享至 LINE／其他 App</button>
         <button id="new-booking-button" type="button">再新增一筆</button>
       </div>
     </div>
 
     <script src="config.js?v=20260706-1"></script>
-    <script src="app.js?v=1.1.6-beta"></script>
+    <script src="app.js?v=1.1.7-beta"></script>
   </body>
 </html>

@@ -2027,6 +2027,9 @@ footer .footer-sync {
   background: #14777a;
 }
 
+.share-text { box-sizing: border-box; width: 100%; min-height: 150px; margin: 16px 0 10px; padding: 12px; border: 1px solid #cfdad5; border-radius: 8px; background: #f7faf8; color: #29453e; font: inherit; font-size: 14px; line-height: 1.55; resize: vertical; }
+.success-modal .share-result-button { margin-bottom: 10px; background: #06c755; }
+
 @media (max-width: 930px) {
   .content-grid {
     grid-template-columns: 1fr;
@@ -2310,3 +2313,12 @@ textarea {
 footer {
   width: 100%;
 }
+
+.unsupported-browser-notice[hidden] { display: none; }
+.unsupported-browser-notice { position: fixed; z-index: 9999; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(12, 39, 34, 0.88); }
+.unsupported-browser-card { width: min(100%, 440px); padding: 30px 24px; border-radius: 20px; background: #ffffff; color: #173d35; text-align: center; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24); }
+.unsupported-browser-icon { display: grid; width: 54px; height: 54px; margin: 0 auto 16px; place-items: center; border-radius: 16px; background: #e6f2ed; color: #14777a; font-size: 30px; font-weight: 800; }
+.unsupported-browser-card > p:first-of-type { margin: 0 0 8px; color: #19716e; font-family: "Outfit", "Noto Sans TC", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; }
+.unsupported-browser-card h1 { margin: 0; font-size: 25px; }
+.unsupported-browser-copy { margin: 14px 0 22px; color: #58716a; font-size: 15px; line-height: 1.7; text-align: left; }
+.unsupported-browser-card button { width: 100%; min-height: 50px; border: 0; border-radius: 12px; background: #14777a; color: #ffffff; font: inherit; font-weight: 700; }
