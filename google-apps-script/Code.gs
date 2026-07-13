@@ -38,10 +38,15 @@ const HOSPITALS = HOSPITAL_GROUPS.reduce(function (all, group) {
   return all.concat(group[1]);
 }, []);
 const INSTRUMENT_CATALOG = [
-  ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1", "Enstie X校正箱"]],
-  ["3D類別 P", "3DP", ["E1", "E2", "E3", "E4", "Enstie P校正箱"]],
+  ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1"]],
+  ["3D類別 P", "3DP", ["E1", "E2", "E3", "E4"]],
   ["ICE系列", "ICE", ["ICE-H", "ICE-H-2", "ICE-H-3", "ICE(CX50)-1", "ICE(CX50)-2", "ICE-TS"]],
-  ["WMC系列", "WMC", ["WMC-2", "Claris校正包"]],
+  ["WMC系列", "WMC", ["WMC-2"]],
+  ["校正類", "CAL", [
+    { id: "3DX-Enstie X校正箱", name: "Enstie X校正箱" },
+    { id: "3DP-Enstie P校正箱", name: "Enstie P校正箱" },
+    { id: "WMC-Claris校正包", name: "Claris校正包" },
+  ]],
   ["LM系列", "LM", ["LM2", "LM3", "LM1"]],
   ["電燒機", "A", ["A1", "A4", "A5", "A6(無Remote)", "A2", "A7"]],
   ["Pump", "P", ["P1", "P2", "P5", "P3", "P4"]],
@@ -224,14 +229,18 @@ function getCatalogRows() {
   INSTRUMENT_CATALOG.forEach((group) => {
     const category = group[0];
     const code = group[1];
-    group[2].forEach((name) => rows.push([
-      code + "-" + name,
+    group[2].forEach((instrument) => {
+      const name = typeof instrument === "string" ? instrument : instrument.name;
+      const id = typeof instrument === "string" ? code + "-" + name : instrument.id;
+      rows.push([
+      id,
       name,
       category,
       code,
       true,
-      INSTRUMENT_REGIONS[code + "-" + name] || "",
-    ]));
+      INSTRUMENT_REGIONS[id] || "",
+      ]);
+    });
   });
   return rows;
 }
@@ -242,7 +251,7 @@ function doGet(e) {
       return HtmlService
         .createTemplateFromFile("Index")
         .evaluate()
-        .setTitle("儀器借用幫手 Beta測試版")
+        .setTitle("銀鐸 EP 業務幫手 V1.4.0-beta.3")
         .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     }
 
@@ -258,6 +267,17 @@ function doGet(e) {
       return jsonResponse({ success: true, schedule: getInstrumentMonthSchedule(
         sanitizeText(e.parameter.month, 7),
         sanitizeText(e.parameter.instrumentId, 120)
+      ) });
+    }
+
+    if (e.parameter.action === "scheduleCategories") {
+      return jsonResponse({ success: true, categories: getScheduleCategoryCatalog() });
+    }
+
+    if (e.parameter.action === "categoryScheduleMonth") {
+      return jsonResponse({ success: true, schedule: getInstrumentCategoryMonthSchedule(
+        sanitizeText(e.parameter.month, 7),
+        sanitizeText(e.parameter.category, 100)
       ) });
     }
 
@@ -304,11 +324,19 @@ function apiGetAvailability(date) {
 }
 
 function apiGetInstrumentMonthSchedule(month, instrumentId) {
-  getActiveUserEmail();
   return { success: true, schedule: getInstrumentMonthSchedule(month, instrumentId) };
 }
 
+function apiGetScheduleCategories() {
+  return { success: true, categories: getScheduleCategoryCatalog() };
+}
+
+function apiGetInstrumentCategoryMonthSchedule(month, category) {
+  return { success: true, schedule: getInstrumentCategoryMonthSchedule(month, category) };
+}
+
 function apiSubmitBooking(data) {
+  getActiveUserEmail();
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
@@ -415,6 +443,11 @@ function repairCancelledSchedules() {
 }
 
 function doPost(e) {
+  try {
+    getActiveUserEmail();
+  } catch (error) {
+    return jsonResponse({ success: false, message: error.message });
+  }
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
@@ -443,12 +476,9 @@ function handleBookingSubmission(data) {
   if (selections.some((selection) => !selection.instrument)) {
     throw new Error("部分儀器資料不存在，請返回重新選擇。");
   }
-  const newlyUnavailable = selections.filter((selection) =>
-    selection.requested.requestType === "booking" && !selection.instrument.available
+  const adjustedSelections = selections.filter((selection) =>
+    (selection.requested.requestType === "booking") !== Boolean(selection.instrument.available)
   );
-  if (newlyUnavailable.length) {
-    throw new Error("部分原本可借的儀器剛剛已被借用，請返回改選備取。");
-  }
 
   const bookingId = Utilities.getUuid().slice(0, 8).toUpperCase();
   const sheet = getRequiredSheet(BOOKINGS_SHEET);
@@ -460,11 +490,13 @@ function handleBookingSubmission(data) {
   const submittedAt = new Date();
   let bookingCount = 0;
   let waitlistCount = 0;
+  const instrumentResults = [];
   selections.forEach((selection) => {
     const instrument = selection.instrument;
     const status = instrument.available ? "已預約" : "備取中";
     if (status === "已預約") bookingCount += 1;
     if (status === "備取中") waitlistCount += 1;
+    instrumentResults.push({ id: instrument.id, status: status });
     updateMonthlySchedule({
       date: data.date,
       hospital: hospital,
@@ -501,6 +533,9 @@ function handleBookingSubmission(data) {
     instrumentCount: selections.length,
     bookingCount: bookingCount,
     waitlistCount: waitlistCount,
+    availabilityAdjusted: adjustedSelections.length > 0,
+    availabilityAdjustedCount: adjustedSelections.length,
+    instrumentResults: instrumentResults,
   };
 }
 
@@ -657,6 +692,211 @@ function getInstrumentMonthSchedule(month, instrumentId) {
     };
   }
   return { month: month, instrument: instrument, days: days };
+}
+
+/**
+ * Category Calendar Service
+ *
+ * The instrument/category relationship is read from the existing 儀器清單 sheet.
+ * This keeps category configuration in one place and avoids frontend hard-coding.
+ */
+function getScheduleCategoryCatalog() {
+  const sheet = getRequiredSheet(INSTRUMENTS_SHEET);
+  ensureInstrumentsSheetSchema(sheet);
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0] || [];
+  const idIndex = headers.indexOf("系統識別碼");
+  const nameIndex = headers.indexOf("儀器編號");
+  const categoryIndex = headers.indexOf("分類");
+  const codeIndex = headers.indexOf("畫面代碼");
+  const enabledIndex = headers.indexOf("啟用");
+  const regionIndex = headers.indexOf("區域劃分");
+  if (idIndex < 0 || nameIndex < 0 || categoryIndex < 0) {
+    throw new Error("儀器清單缺少系統識別碼、儀器編號或分類欄位。");
+  }
+
+  const categories = [];
+  const byName = {};
+  values.slice(1).forEach(function (row) {
+    const id = sanitizeText(row[idIndex], 120);
+    const name = sanitizeText(row[nameIndex], 120);
+    const category = sanitizeText(row[categoryIndex], 100);
+    if (!id || !name || !category) return;
+    if (!byName[category]) {
+      byName[category] = {
+        name: category,
+        code: codeIndex >= 0 ? sanitizeText(row[codeIndex], 30) : "",
+        enabledCount: 0,
+        instruments: [],
+      };
+      categories.push(byName[category]);
+    }
+    const enabled = enabledIndex < 0 ? true : isInstrumentEnabledValue(row[enabledIndex]);
+    if (enabled) byName[category].enabledCount += 1;
+    byName[category].instruments.push({
+      id: id,
+      name: name,
+      enabled: enabled,
+      region: regionIndex >= 0 ? sanitizeText(row[regionIndex], 30) : "",
+    });
+  });
+  return categories;
+}
+
+function isInstrumentEnabledValue(value) {
+  if (value === false || value === 0) return false;
+  const normalized = String(value == null ? "" : value).normalize("NFKC").trim().toUpperCase();
+  return normalized !== "FALSE" && normalized !== "0" && normalized !== "停用" && normalized !== "否";
+}
+
+function normalizeCalendarText(value) {
+  return String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function getInstrumentCategoryMonthSchedule(month, categoryName) {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ""))) throw new Error("月份格式不正確。");
+  const parts = month.split("-").map(Number);
+  const year = parts[0];
+  const monthNumber = parts[1];
+  if (year < 2020 || year > 2100 || monthNumber < 1 || monthNumber > 12) throw new Error("月份超出可查詢範圍。");
+
+  const categories = getScheduleCategoryCatalog();
+  const category = categories.find(function (item) { return item.name === categoryName; });
+  if (!category) throw new Error("找不到指定的儀器類別。");
+
+  const bookingSheet = getRequiredSheet(BOOKINGS_SHEET);
+  ensureBookingsSheetSchema(bookingSheet);
+  const bookingValues = bookingSheet.getDataRange().getDisplayValues();
+  const bookingHeaders = bookingValues[0] || [];
+  const categoryIds = {};
+  category.instruments.forEach(function (instrument) { categoryIds[instrument.id] = true; });
+  const bookingGroups = {};
+  bookingValues.slice(1).forEach(function (row) {
+    const date = normalizeDate(getCell(row, bookingHeaders, "借用日期"));
+    const instrumentId = getCell(row, bookingHeaders, "系統識別碼") || getCell(row, bookingHeaders, "儀器編號");
+    const status = getCell(row, bookingHeaders, "狀態");
+    if (date.slice(0, 7) !== month || !categoryIds[instrumentId] || (status !== "已預約" && status !== "備取中")) return;
+    const key = date + "|" + instrumentId;
+    if (!bookingGroups[key]) bookingGroups[key] = { booked: [], waitlist: [] };
+    const record = {
+      hospital: getCell(row, bookingHeaders, "借用醫院"),
+      borrower: getCell(row, bookingHeaders, "借用人"),
+      notes: getCell(row, bookingHeaders, "備註／手術內容"),
+      deliveryTime: getCell(row, bookingHeaders, "送達時間"),
+      pickupTime: getCell(row, bookingHeaders, "取回時間"),
+      source: "app",
+    };
+    if (status === "已預約") bookingGroups[key].booked.push(record);
+    if (status === "備取中") bookingGroups[key].waitlist.push(record);
+  });
+
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const scheduleSheetName = ("0" + monthNumber).slice(-2) + SCHEDULE_SHEET_SUFFIX;
+  const scheduleSheet = getSpreadsheet().getSheetByName(scheduleSheetName);
+  let fixedRows = [];
+  let monthGrid = [];
+  if (scheduleSheet) {
+    const lastRow = scheduleSheet.getLastRow();
+    fixedRows = scheduleSheet.getRange(1, 1, lastRow, 5).getDisplayValues();
+    const requiredColumns = daysInMonth * SCHEDULE_DATE_BLOCK_WIDTH;
+    if (SCHEDULE_FIRST_DATE_COLUMN + requiredColumns - 1 <= scheduleSheet.getLastColumn()) {
+      monthGrid = scheduleSheet.getRange(1, SCHEDULE_FIRST_DATE_COLUMN, lastRow, requiredColumns).getDisplayValues();
+    }
+  }
+
+  const instruments = category.instruments.map(function (instrument) {
+    const baseIndex = fixedRows.length ? findScheduleBaseRowIndex(fixedRows, instrument.name) : -1;
+    return {
+      id: instrument.id,
+      name: instrument.name,
+      enabled: instrument.enabled,
+      region: instrument.region,
+      scheduleMissing: baseIndex < 0 || !monthGrid.length,
+      scheduleBaseIndex: baseIndex,
+    };
+  });
+
+  const days = {};
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = month + "-" + ("0" + day).slice(-2);
+    const offset = (day - 1) * SCHEDULE_DATE_BLOCK_WIDTH;
+    const details = instruments.map(function (instrument) {
+      const records = bookingGroups[date + "|" + instrument.id] || { booked: [], waitlist: [] };
+      const booked = records.booked.slice();
+      const waitlist = records.waitlist.map(function (item, index) {
+        const copy = Object.assign({}, item);
+        copy.order = index + 1;
+        return copy;
+      });
+      const destinationIndex = instrument.scheduleBaseIndex + 1;
+      const scheduleHospital = instrument.scheduleMissing
+        ? ""
+        : sanitizeText(((monthGrid[destinationIndex] || [])[offset]), 100);
+      const scheduleWaitlistCount = instrument.scheduleMissing
+        ? 0
+        : getScheduleWaitlistCount((monthGrid[destinationIndex] || [])[offset + 2]);
+      const hasMatchingAppBooking = scheduleHospital && booked.some(function (item) {
+        return normalizeCalendarText(item.hospital) === normalizeCalendarText(scheduleHospital);
+      });
+      const manualSchedule = Boolean(scheduleHospital && !hasMatchingAppBooking);
+      if (manualSchedule) {
+        booked.unshift({
+          hospital: scheduleHospital,
+          borrower: "",
+          notes: "人工排程（詳細資料請查月行程表）",
+          deliveryTime: "",
+          pickupTime: "",
+          source: "manual",
+        });
+      }
+      const occupied = Boolean(scheduleHospital || records.booked.length);
+      const available = Boolean(instrument.enabled && !instrument.scheduleMissing && !occupied);
+      return {
+        id: instrument.id,
+        name: instrument.name,
+        region: instrument.region,
+        enabled: instrument.enabled,
+        scheduleMissing: instrument.scheduleMissing,
+        status: !instrument.enabled || instrument.scheduleMissing ? "disabled" : (available ? "available" : "occupied"),
+        available: available,
+        occupied: occupied,
+        borrowedHospital: scheduleHospital || (records.booked[0] ? records.booked[0].hospital : ""),
+        booked: booked,
+        waitlist: waitlist,
+        waitlistCount: Math.max(waitlist.length, scheduleWaitlistCount),
+        manualSchedule: manualSchedule,
+      };
+    });
+    details.sort(function (a, b) {
+      const order = { available: 0, occupied: 1, disabled: 2 };
+      return order[a.status] - order[b.status] || a.name.localeCompare(b.name, "zh-Hant");
+    });
+    const enabledDetails = details.filter(function (item) { return item.enabled && !item.scheduleMissing; });
+    const availableCount = enabledDetails.filter(function (item) { return item.available; }).length;
+    const occupiedCount = enabledDetails.filter(function (item) { return item.occupied; }).length;
+    days[date] = {
+      status: enabledDetails.length === 0 ? "neutral" : (availableCount > 0 ? "available" : "booked"),
+      totalCount: details.length,
+      enabledCount: enabledDetails.length,
+      occupiedCount: occupiedCount,
+      availableCount: availableCount,
+      instruments: details,
+    };
+  }
+
+  return {
+    month: month,
+    category: { name: category.name, code: category.code },
+    instruments: instruments.map(function (item) {
+      return { id: item.id, name: item.name, enabled: item.enabled, region: item.region, scheduleMissing: item.scheduleMissing };
+    }),
+    days: days,
+    source: {
+      instrumentCatalog: INSTRUMENTS_SHEET,
+      bookingRecords: BOOKINGS_SHEET,
+      monthlySchedule: scheduleSheetName,
+    },
+  };
 }
 
 function getScheduleWaitlistCount(note) {

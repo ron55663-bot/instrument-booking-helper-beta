@@ -66,6 +66,11 @@
           </div>
 
           <form id="booking-form" novalidate>
+            <div id="booking-auth-notice" class="booking-auth-notice" role="status">
+              <strong>請先登入公司 Google 帳號</strong>
+              <span>尚未登入時仍可查看排程，但無法送出借用申請。</span>
+              <a href="#my-instruments">前往登入</a>
+            </div>
             <div class="form-grid">
               <label class="field date-field">
                 <span class="field-label">借用日期 <b>必填</b></span>
@@ -122,33 +127,43 @@
                 <small id="availability-hint" class="field-hint">每個類別皆可複選；已借用的儀器仍可點選排隊備取。</small>
               </fieldset>
 
-              <label class="field">
+              <div class="field time-shortcut-field" data-time-field="delivery">
                 <span class="field-label">送達時間 <b>必填</b></span>
-                <span class="input-wrap">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 2" />
-                  </svg>
-                  <select id="delivery-time" class="time-select" name="deliveryTime" required>
-                    <option value="">請選擇時間</option>
-                  </select>
-                </span>
-                <small class="field-hint">每 30 分鐘一格，使用 24 小時制。</small>
-              </label>
+                <div class="quick-time-options" data-time-options aria-label="常用送達時間"></div>
+                <button class="other-time-button" type="button" data-other-time aria-expanded="false" aria-controls="delivery-other-time">其他時間</button>
+                <div id="delivery-other-time" class="other-time-panel" data-other-time-panel hidden>
+                  <span class="input-wrap">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" />
+                    </svg>
+                    <select id="delivery-time" class="time-select" name="deliveryTime" aria-label="送達時間完整選擇" aria-required="true">
+                      <option value="">請選擇時間</option>
+                    </select>
+                  </span>
+                </div>
+                <small class="selected-time-label" data-selected-time aria-live="polite">尚未選擇時間</small>
+                <small class="field-hint">常用時間可快速選擇；其他時間仍以 30 分鐘為一格。</small>
+              </div>
 
-              <label class="field">
+              <div class="field time-shortcut-field" data-time-field="pickup">
                 <span class="field-label">取回時間 <b>必填</b></span>
-                <span class="input-wrap">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 2" />
-                  </svg>
-                  <select id="pickup-time" class="time-select" name="pickupTime" required>
-                    <option value="">請選擇時間</option>
-                  </select>
-                </span>
-                <small class="field-hint">使用 00:00–23:30 的 24 小時格式。</small>
-              </label>
+                <div class="quick-time-options" data-time-options aria-label="常用取回時間"></div>
+                <button class="other-time-button" type="button" data-other-time aria-expanded="false" aria-controls="pickup-other-time">其他時間</button>
+                <div id="pickup-other-time" class="other-time-panel" data-other-time-panel hidden>
+                  <span class="input-wrap">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" />
+                    </svg>
+                    <select id="pickup-time" class="time-select" name="pickupTime" aria-label="取回時間完整選擇" aria-required="true">
+                      <option value="">請選擇時間</option>
+                    </select>
+                  </span>
+                </div>
+                <small class="selected-time-label" data-selected-time aria-live="polite">尚未選擇時間</small>
+                <small class="field-hint">常用時間可快速選擇；其他時間仍以 30 分鐘為一格。</small>
+              </div>
 
               <label class="field field-wide">
                 <span class="field-label">備註／手術內容 <span>選填</span></span>
@@ -190,9 +205,9 @@
                 <h2>排程查詢</h2>
               </div>
               <label class="calendar-instrument-field">
-                <span>儀器選擇</span>
-                <select id="calendar-instrument-select" aria-label="選擇查詢儀器">
-                  <option value="">請選擇儀器</option>
+                <span>儀器類別</span>
+                <select id="calendar-instrument-select" aria-label="選擇查詢儀器類別">
+                  <option value="">請選擇儀器類別</option>
                 </select>
               </label>
             </div>
@@ -210,7 +225,7 @@
             <div id="calendar-grid" class="calendar-grid" aria-label="月曆"></div>
             <div id="calendar-loading" class="calendar-loading" hidden>正在讀取 Google 試算表排程…</div>
             <section id="calendar-detail" class="calendar-detail" aria-live="polite">
-              <div class="calendar-detail-empty">請先選擇儀器，再點選日期查看排程。</div>
+              <div class="calendar-detail-empty">請先選擇儀器類別，再點選日期查看排程。</div>
             </section>
             <p class="status-note"><i></i> 狀態依 Google 試算表有效借用資料即時更新；已取消紀錄不會占用儀器。</p>
           </aside>
@@ -244,7 +259,7 @@
         </main>
       </div>
       <footer id="help">
-        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.3.0 Beta</b></span>
+        <span class="footer-credit">Designed by Ron C, Billy L, Jeff W. <b class="footer-version">V1.4.0-beta.3</b></span>
         <span class="footer-sync">資料同步至 Google 試算表</span>
       </footer>
       <nav class="page-tabs" aria-label="工作台功能">
@@ -267,7 +282,7 @@
       <div class="review-modal release-modal">
         <div class="review-heading">
           <div>
-            <p>WHAT'S NEW・<span id="release-version">V1.3.0 Beta</span></p>
+            <p>WHAT'S NEW・<span id="release-version">V1.4.0-beta.3</span></p>
             <h2 id="release-title">版本更新內容</h2>
           </div>
         </div>

@@ -1,8 +1,15 @@
 <script>
 const CONFIG = window.APP_CONFIG || {};
-const APP_VERSION = "1.3.0-beta";
-const APP_VERSION_LABEL = "V1.3.0 Beta";
+const APP_VERSION = "1.4.0-beta.3";
+const APP_VERSION_LABEL = "V1.4.0-beta.3";
 const RELEASE_NOTES = [
+  "修正快捷時間選中後文字看似消失，選中按鈕現在會保留並清楚換色。",
+  "送達與取回時間新增常用時段快捷按鈕，保留完整 30 分鐘時間選單。",
+  "新增「校正類」，集中顯示 Enstie X／P 校正箱與 Claris 校正包。",
+  "排程月曆改為依儀器類別彙整同類別所有儀器狀態。",
+  "日期明細可一次查看可借用、正式借用、備取與人工排程。",
+  "從月曆選擇實際儀器後，可帶入既有借用頁繼續確認。",
+  "最終送出會重新檢查最新狀態，自動依最新狀態建立正式借用或備取。",
   "修正取消借用後月行程表未同步釋出的問題。",
   "取消時直接釋出同日該儀器的送達、醫院與取回排程。",
   "修正取消流程讀取錯誤的儀器欄位，並可修復舊版未釋出的排程。",
@@ -28,6 +35,7 @@ const RELEASE_NOTES = [
   "LINE 通知改為圖示化格式，並分開顯示借用與備取儀器。",
   "更新 Beta 測試版 App 代表圖示。",
   "排程頁升級為儀器月曆，可查看正式借用、備取順序並直接開始借用。",
+  "借用儀器前必須先登入公司 Google 帳號；未登入仍可查看排程。",
 ];
 const RELEASE_STORAGE_KEY = "instrument-helper-last-seen-version";
 const GOOGLE_LOGIN_STORAGE_KEY = "instrument-helper-google-login";
@@ -52,12 +60,21 @@ const HOSPITAL_GROUPS = [
 const HOSPITAL_OPTIONS = HOSPITAL_GROUPS.flatMap(([region, hospitals]) =>
   hospitals.map((name) => ({ name, region }))
 );
+const QUICK_TIME_OPTIONS = {
+  delivery: ["07:30", "08:00", "08:30", "09:00"],
+  pickup: ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"],
+};
 
 const INSTRUMENT_CATALOG = [
-  ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1", "Enstie X校正箱"]],
-  ["3D類別 P", "3DP", ["E1", "E2", "E3", "E4", "Enstie P校正箱"]],
+  ["3D類別 X", "3DX", ["EX2", "EX3", "EX4", "EX1"]],
+  ["3D類別 P", "3DP", ["E1", "E2", "E3", "E4"]],
   ["ICE系列", "ICE", ["ICE-H", "ICE-H-2", "ICE-H-3", "ICE(CX50)-1", "ICE(CX50)-2", "ICE-TS"]],
-  ["WMC系列", "WMC", ["WMC-2", "Claris校正包"]],
+  ["WMC系列", "WMC", ["WMC-2"]],
+  ["校正類", "CAL", [
+    { id: "3DX-Enstie X校正箱", name: "Enstie X校正箱" },
+    { id: "3DP-Enstie P校正箱", name: "Enstie P校正箱" },
+    { id: "WMC-Claris校正包", name: "Claris校正包" },
+  ]],
   ["LM系列", "LM", ["LM2", "LM3", "LM1"]],
   ["電燒機", "A", ["A1", "A4", "A5", "A6(無Remote)", "A2", "A7"]],
   ["Pump", "P", ["P1", "P2", "P5", "P3", "P4"]],
@@ -139,9 +156,18 @@ const INSTRUMENT_REGIONS = {
   "OT-CathLink(C2)": "備機",
 };
 
+function getCatalogInstrumentName(instrument) {
+  return typeof instrument === "string" ? instrument : instrument.name;
+}
+
+function getCatalogInstrumentId(code, instrument) {
+  return typeof instrument === "string" ? `${code}-${instrument}` : instrument.id;
+}
+
 const DEMO_INSTRUMENTS = INSTRUMENT_CATALOG.flatMap(([category, code, instruments]) =>
-  instruments.map((name) => {
-    const id = `${code}-${name}`;
+  instruments.map((instrument) => {
+    const name = getCatalogInstrumentName(instrument);
+    const id = getCatalogInstrumentId(code, instrument);
     return {
       id,
       name,
@@ -153,6 +179,7 @@ const DEMO_INSTRUMENTS = INSTRUMENT_CATALOG.flatMap(([category, code, instrument
 );
 const els = {
   form: document.querySelector("#booking-form"),
+  bookingAuthNotice: document.querySelector("#booking-auth-notice"),
   date: document.querySelector("#borrow-date"),
   borrower: document.querySelector("#borrower-name"),
   hospital: document.querySelector("#hospital-name"),
@@ -352,6 +379,83 @@ function populateTimeOptions(select) {
   }
 }
 
+function getTimeShortcutField(type) {
+  return document.querySelector(`[data-time-field="${type}"]`);
+}
+
+function syncTimeShortcutField(type) {
+  const field = getTimeShortcutField(type);
+  if (!field) return;
+  const select = type === "delivery" ? els.deliveryTime : els.pickupTime;
+  let mode = field.dataset.selectionMode || "";
+  if (!mode && QUICK_TIME_OPTIONS[type].includes(select.value)) {
+    mode = "quick";
+    field.dataset.selectionMode = mode;
+  }
+  field.querySelectorAll("[data-quick-time]").forEach((button) => {
+    const selected = mode === "quick" && button.dataset.quickTime === select.value;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  const label = field.querySelector("[data-selected-time]");
+  if (label) label.textContent = select.value ? `已選時間：${select.value}` : "尚未選擇時間";
+  const otherButton = field.querySelector("[data-other-time]");
+  const customSelected = mode === "custom" && Boolean(select.value);
+  if (otherButton) {
+    otherButton.classList.toggle("is-selected", customSelected);
+    otherButton.setAttribute("aria-pressed", String(customSelected));
+    otherButton.textContent = customSelected ? "已選其他時間" : "其他時間";
+  }
+}
+
+function setOtherTimePanel(field, open) {
+  const panel = field.querySelector("[data-other-time-panel]");
+  const button = field.querySelector("[data-other-time]");
+  if (panel) panel.hidden = !open;
+  if (button) button.setAttribute("aria-expanded", String(open));
+}
+
+function initializeTimeShortcutField(type) {
+  const field = getTimeShortcutField(type);
+  if (!field) return;
+  const select = type === "delivery" ? els.deliveryTime : els.pickupTime;
+  const container = field.querySelector("[data-time-options]");
+  container.innerHTML = QUICK_TIME_OPTIONS[type]
+    .map((time) => `<button class="quick-time-button" type="button" data-quick-time="${time}" aria-pressed="false">${time}</button>`)
+    .join("");
+  container.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-quick-time]");
+    if (!button) return;
+    select.value = button.dataset.quickTime;
+    field.dataset.selectionMode = "quick";
+    setOtherTimePanel(field, false);
+    syncTimeShortcutField(type);
+  });
+  field.querySelector("[data-other-time]").addEventListener("click", () => {
+    const panel = field.querySelector("[data-other-time-panel]");
+    const open = panel.hidden;
+    field.dataset.selectionMode = open ? "custom" : (field.dataset.selectionMode || "");
+    setOtherTimePanel(field, open);
+    syncTimeShortcutField(type);
+    if (open) select.focus();
+  });
+  select.addEventListener("change", () => {
+    field.dataset.selectionMode = "custom";
+    syncTimeShortcutField(type);
+  });
+  syncTimeShortcutField(type);
+}
+
+function resetTimeShortcutFields() {
+  ["delivery", "pickup"].forEach((type) => {
+    const field = getTimeShortcutField(type);
+    if (!field) return;
+    field.dataset.selectionMode = "";
+    setOtherTimePanel(field, false);
+    syncTimeShortcutField(type);
+  });
+}
+
 function getApiBaseUrl() {
   const rawUrl = CONFIG.googleAppsScriptUrl || (CONFIG.useCurrentUrlApi ? window.location.href : "");
   if (!rawUrl) return null;
@@ -499,48 +603,94 @@ function getDemoInstruments(date = "") {
   }));
 }
 
-// 月曆函式與 app.js 保持一致。
-function populateCalendarInstruments() {
+// V1.4.0-beta.3：月曆類別清單與狀態均由後端 Calendar Service 提供。
+async function populateCalendarCategories() {
   if (!els.calendarInstrument) return;
-  const groups = INSTRUMENT_CATALOG.map(([category, code, names]) => {
-    const options = names.map((name) => {
-      const id = `${code}-${name}`;
-      return `<option value="${escapeHtml(id)}">${escapeHtml(getInstrumentLabel({ id, name: formatShareInstrumentName(name) }))}</option>`;
-    }).join("");
-    return `<optgroup label="${escapeHtml(category)}">${options}</optgroup>`;
-  }).join("");
-  els.calendarInstrument.innerHTML = `<option value="">請選擇儀器</option>${groups}`;
+  try {
+    let categories;
+    if (isDemoMode()) {
+      categories = INSTRUMENT_CATALOG.map(([name, code, instruments]) => ({
+        name,
+        code,
+        enabledCount: instruments.length,
+        instruments: instruments.map((instrument) => ({
+          id: getCatalogInstrumentId(code, instrument),
+          name: getCatalogInstrumentName(instrument),
+          enabled: true,
+        })),
+      }));
+    } else if (canUseGoogleScriptRun()) {
+      const result = await runServer("apiGetScheduleCategories");
+      if (!result.success) throw new Error(result.message || "無法取得儀器類別");
+      categories = result.categories || [];
+    } else {
+      const url = getApiBaseUrl();
+      url.searchParams.set("action", "scheduleCategories");
+      const response = await fetch(url);
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || "無法取得儀器類別");
+      categories = result.categories || [];
+    }
+    els.calendarInstrument.innerHTML = `<option value="">請選擇儀器類別</option>${categories.map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}（${Number(item.enabledCount || 0)} 台啟用）</option>`).join("")}`;
+  } catch (error) {
+    els.calendarInstrument.innerHTML = '<option value="">類別載入失敗</option>';
+    if (els.calendarDetail) els.calendarDetail.innerHTML = `<div class="form-message error">${escapeHtml(error.message)}</div>`;
+  }
 }
 
-function buildDemoMonthSchedule(month, instrumentId) {
-  const instrument = DEMO_INSTRUMENTS.find((item) => item.id === instrumentId);
+function buildDemoCategoryMonthSchedule(month, categoryName) {
+  const catalog = INSTRUMENT_CATALOG.find(([name]) => name === categoryName) || INSTRUMENT_CATALOG[0];
+  const [, code, names] = catalog;
+  const instruments = names.map((instrument) => ({
+    id: getCatalogInstrumentId(code, instrument),
+    name: getCatalogInstrumentName(instrument),
+    enabled: true,
+    scheduleMissing: false,
+  }));
   const [year, monthNumber] = month.split("-").map(Number);
   const daysInMonth = new Date(year, monthNumber, 0).getDate();
   const days = {};
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = `${month}-${String(day).padStart(2, "0")}`;
-    const booked = day % 4 === 2;
-    const waitlisted = day % 7 === 0;
+    const allOccupied = day % 4 === 2;
+    const details = instruments.map((instrument, index) => {
+      const occupied = allOccupied || index < (day % instruments.length);
+      return {
+        ...instrument,
+        status: occupied ? "occupied" : "available",
+        available: !occupied,
+        occupied,
+        borrowedHospital: occupied ? (index % 2 ? "中國醫" : "南辦") : "",
+        booked: occupied ? [{ hospital: index % 2 ? "中國醫" : "南辦", borrower: "測試使用者", notes: "Demo 排程", source: "app" }] : [],
+        waitlist: day % 7 === 0 && occupied ? [{ hospital: "中榮", borrower: "Ron", notes: "Demo 備取", order: 1 }] : [],
+        waitlistCount: day % 7 === 0 && occupied ? 1 : 0,
+        manualSchedule: false,
+      };
+    });
+    const availableCount = details.filter((item) => item.available).length;
     days[date] = {
-      available: !booked,
-      booked: booked ? [{ hospital: day % 8 === 2 ? "南辦" : "中國醫", borrower: booked && day % 8 === 2 ? "Jeff Wang" : "Billy", notes: day % 3 ? "AF 使用" : "" }] : [],
-      waitlist: waitlisted ? [{ hospital: "中榮", borrower: "Ron", notes: "心律不整電燒手術", order: 1 }] : [],
+      status: availableCount ? "available" : "booked",
+      totalCount: details.length,
+      enabledCount: details.length,
+      occupiedCount: details.length - availableCount,
+      availableCount,
+      instruments: details,
     };
   }
-  return { month, instrument: instrument || { id: instrumentId, name: instrumentId }, days };
+  return { month, category: { name: categoryName, code }, instruments, days };
 }
 
-async function fetchInstrumentMonthSchedule(month, instrumentId) {
-  if (isDemoMode()) return buildDemoMonthSchedule(month, instrumentId);
+async function fetchInstrumentCategoryMonthSchedule(month, categoryName) {
+  if (isDemoMode()) return buildDemoCategoryMonthSchedule(month, categoryName);
   if (canUseGoogleScriptRun()) {
-    const result = await runServer("apiGetInstrumentMonthSchedule", month, instrumentId);
+    const result = await runServer("apiGetInstrumentCategoryMonthSchedule", month, categoryName);
     if (!result.success) throw new Error(result.message || "無法取得月曆排程");
     return result.schedule;
   }
   const url = getApiBaseUrl();
-  url.searchParams.set("action", "scheduleMonth");
+  url.searchParams.set("action", "categoryScheduleMonth");
   url.searchParams.set("month", month);
-  url.searchParams.set("instrumentId", instrumentId);
+  url.searchParams.set("category", categoryName);
   const response = await fetch(url);
   const result = await response.json();
   if (!response.ok || !result.success) throw new Error(result.message || "無法取得月曆排程");
@@ -573,7 +723,7 @@ function renderCalendar() {
     }
     const date = `${calendarMonth}-${String(day).padStart(2, "0")}`;
     const state = calendarSchedule?.days?.[date];
-    const dot = els.calendarInstrument.value && state ? `<i class="calendar-dot ${state.available ? "available" : "booked"}" aria-label="${state.available ? "可借用" : "已借用，可備取"}"></i>` : "";
+    const dot = els.calendarInstrument.value && state && state.status !== "neutral" ? `<i class="calendar-dot ${state.status === "available" ? "available" : "booked"}" aria-label="${state.status === "available" ? "類別仍有儀器可借用" : "類別全部占用，可登記備取"}"></i>` : "";
     const classes = ["calendar-day", date === calendarSelectedDate ? "selected" : "", date === today ? "today" : ""].filter(Boolean).join(" ");
     cells.push(`<button class="${classes}" type="button" data-date="${date}"><span class="calendar-day-number">${day}</span>${dot}</button>`);
   }
@@ -581,25 +731,32 @@ function renderCalendar() {
   renderCalendarDetail();
 }
 
-function renderCalendarRecords(records, type) {
-  if (!records?.length) return `<div class="calendar-detail-item"><span>${type === "booked" ? "目前無借用醫院" : "目前無備取醫院"}</span></div>`;
-  return records.map((item, index) => `<div class="calendar-detail-item"><strong>${type === "waitlist" ? `${item.order || index + 1}. ` : ""}${escapeHtml(item.hospital || "未填寫醫院")}｜${escapeHtml(item.borrower || "未填寫借用人")}</strong><span>${escapeHtml(item.notes || "無手術內容或備註")}</span>${item.deliveryTime || item.pickupTime ? `<small>${escapeHtml(item.deliveryTime || "—")} 送達／${escapeHtml(item.pickupTime || "—")} 取回</small>` : ""}</div>`).join("");
+function renderCategoryInstrumentCard(instrument) {
+  const statusLabel = instrument.status === "available" ? "可借用" : instrument.status === "occupied" ? "已借用，可備取" : "停用／無月表位置";
+  const booked = instrument.booked?.[0];
+  const waitlistText = instrument.waitlistCount ? `備取 ${instrument.waitlistCount} 組${instrument.waitlist?.[0]?.hospital ? `｜首位 ${instrument.waitlist[0].hospital}` : ""}` : "目前無備取";
+  const sourceBadge = instrument.manualSchedule ? '<span class="calendar-source-badge">人工排程</span>' : "";
+  const bookingText = booked ? `${escapeHtml(booked.hospital || instrument.borrowedHospital || "未填寫醫院")}${booked.borrower ? `｜${escapeHtml(booked.borrower)}` : ""}` : "目前無借用醫院";
+  const notes = booked?.notes || "無手術內容或備註";
+  const canStart = instrument.enabled && !instrument.scheduleMissing;
+  return `<article class="calendar-instrument-card ${escapeHtml(instrument.status)}"><div class="calendar-instrument-card-head"><div><strong>${escapeHtml(formatShareInstrumentName(instrument.name))}</strong>${instrument.region ? `<small>${escapeHtml(instrument.region)}區</small>` : ""}</div><span class="calendar-status-badge ${escapeHtml(instrument.status)}">${statusLabel}</span></div>${sourceBadge}<p>${bookingText}</p><small>${escapeHtml(notes)}</small><small class="calendar-waitlist-summary">${escapeHtml(waitlistText)}</small>${canStart ? `<button class="calendar-instrument-start" type="button" data-calendar-instrument-id="${escapeHtml(instrument.id)}">＋開始借用</button>` : ""}</article>`;
 }
 
 function renderCalendarDetail() {
   if (!els.calendarDetail) return;
-  const instrument = calendarSchedule?.instrument;
   if (!els.calendarInstrument.value) {
-    els.calendarDetail.innerHTML = '<div class="calendar-detail-empty">請先選擇儀器，再點選日期查看排程。</div>';
+    els.calendarDetail.innerHTML = '<div class="calendar-detail-empty">請先選擇儀器類別，再點選日期查看排程。</div>';
     return;
   }
   if (!calendarSelectedDate) {
     els.calendarDetail.innerHTML = '<div class="calendar-detail-empty">請點選月曆日期查看借用與備取資料。</div>';
     return;
   }
-  const state = calendarSchedule?.days?.[calendarSelectedDate] || { available: true, booked: [], waitlist: [] };
+  const state = calendarSchedule?.days?.[calendarSelectedDate] || { status: "neutral", instruments: [], availableCount: 0, occupiedCount: 0, enabledCount: 0 };
   const [, month, day] = calendarSelectedDate.split("-").map(Number);
-  els.calendarDetail.innerHTML = `<div class="calendar-detail-head"><h3>${month} 月 ${day} 日｜${escapeHtml(formatShareInstrumentName(instrument?.name || ""))}</h3><span><i class="calendar-dot ${state.available ? "available" : "booked"}"></i>${state.available ? "可借用" : "已借用，可登記備取"}</span></div><div class="calendar-detail-body"><div class="calendar-detail-group"><h4>🟢 正式借用</h4>${renderCalendarRecords(state.booked, "booked")}</div><div class="calendar-detail-group"><h4>🟠 備取名單</h4>${renderCalendarRecords(state.waitlist, "waitlist")}</div></div><div class="calendar-detail-actions"><button id="calendar-start-booking" class="calendar-start-button" type="button">＋ 開始借用</button></div>`;
+  const statusText = state.status === "available" ? `${state.availableCount} 台可借用` : state.status === "booked" ? "全部已占用，可登記備取" : "目前無啟用儀器";
+  const dot = state.status === "neutral" ? "" : `<i class="calendar-dot ${state.status === "available" ? "available" : "booked"}"></i>`;
+  els.calendarDetail.innerHTML = `<div class="calendar-detail-head"><div><h3>${month} 月 ${day} 日｜${escapeHtml(calendarSchedule?.category?.name || els.calendarInstrument.value)}</h3><small>${state.enabledCount} 台啟用・${state.occupiedCount} 台占用</small></div><span>${dot}${statusText}</span></div><div class="calendar-instrument-list">${state.instruments?.length ? state.instruments.map(renderCategoryInstrumentCard).join("") : '<div class="calendar-detail-empty">此類別目前沒有儀器資料。</div>'}</div>`;
 }
 
 async function loadCalendarSchedule() {
@@ -611,7 +768,7 @@ async function loadCalendarSchedule() {
   }
   els.calendarLoading.hidden = false;
   try {
-    calendarSchedule = await fetchInstrumentMonthSchedule(calendarMonth, els.calendarInstrument.value);
+    calendarSchedule = await fetchInstrumentCategoryMonthSchedule(calendarMonth, els.calendarInstrument.value);
   } catch (error) {
     calendarSchedule = null;
     els.calendarDetail.innerHTML = `<div class="form-message error">${escapeHtml(error.message)}</div>`;
@@ -621,14 +778,14 @@ async function loadCalendarSchedule() {
   }
 }
 
-async function startBookingFromCalendar() {
-  if (!calendarSelectedDate || !els.calendarInstrument.value) return;
-  const instrumentId = els.calendarInstrument.value;
+async function startBookingFromCalendar(instrumentId) {
+  if (!calendarSelectedDate || !instrumentId) return;
   els.date.value = calendarSelectedDate;
   els.borrower.value = "";
   els.hospital.value = "";
   els.deliveryTime.value = "";
   els.pickupTime.value = "";
+  resetTimeShortcutFields();
   els.notes.value = "";
   els.notesCount.textContent = "0";
   await handleDateChange();
@@ -842,6 +999,10 @@ function formatDate(date) {
 function handleSubmit(event) {
   event.preventDefault();
   clearError();
+  if (!isBookingAuthenticated()) {
+    showError("請先登入公司 Google 帳號，確認登入後才能借用儀器。");
+    return;
+  }
   const validationError = validateForm();
   if (validationError) {
     showError(validationError);
@@ -902,14 +1063,31 @@ async function submitBooking(payload) {
 
 async function confirmBooking() {
   if (!pendingPayload) return;
+  if (!isBookingAuthenticated()) {
+    els.reviewError.textContent = "登入狀態已失效，請重新登入公司 Google 帳號後再送出。";
+    els.reviewError.hidden = false;
+    return;
+  }
   els.confirmBooking.disabled = true;
   els.confirmBooking.textContent = "正在送出…";
   els.reviewError.hidden = true;
 
   try {
     const result = await submitBooking(pendingPayload);
+    const effectivePayload = result.instrumentResults?.length
+      ? {
+          ...pendingPayload,
+          instruments: pendingPayload.instruments.map((item) => {
+            const latest = result.instrumentResults.find((record) => record.id === item.id);
+            return latest ? { ...item, requestType: latest.status === "已預約" ? "booking" : "waitlist" } : item;
+          }),
+        }
+      : pendingPayload;
     els.reviewModal.hidden = true;
-    showSuccess(pendingPayload, result);
+    showSuccess(effectivePayload, result);
+    els.deliveryTime.value = "";
+    els.pickupTime.value = "";
+    resetTimeShortcutFields();
   } catch (error) {
     els.reviewError.textContent = error.message;
     els.reviewError.hidden = false;
@@ -1022,6 +1200,7 @@ function showSuccess(payload) {
 
 function resetForm() {
   els.form.reset();
+  resetTimeShortcutFields();
   currentInstruments = [];
   selectedInstrumentIds = new Set();
   openCategory = "";
@@ -1050,7 +1229,7 @@ function showReleaseNotesOnce() {
   const forcePreview = new URLSearchParams(window.location.search).get("previewRelease") === "1";
   els.footerVersion.textContent = versionLabel;
   els.releaseVersion.textContent = versionLabel;
-  els.releaseNotes.innerHTML = RELEASE_NOTES.slice(-10)
+  els.releaseNotes.innerHTML = RELEASE_NOTES.slice(0, 10)
     .map((note) => `<li>${escapeHtml(note)}</li>`)
     .join("");
 
@@ -1070,6 +1249,7 @@ function showReleaseNotesOnce() {
 
 function renderProfile(profile) {
   currentProfile = normalizeProfile(profile);
+  updateBookingAuthState();
   if (!els.profileEmail) return;
   if (els.googleLoginButton) els.googleLoginButton.hidden = true;
   if (els.googleLogoutButton) els.googleLogoutButton.hidden = false;
@@ -1137,6 +1317,8 @@ async function loadProfile() {
     localStorage.setItem(GOOGLE_LOGIN_STORAGE_KEY, "1");
     await loadMyBookings();
   } catch (error) {
+    currentProfile = null;
+    updateBookingAuthState();
     localStorage.removeItem(GOOGLE_LOGIN_STORAGE_KEY);
     if (els.profileEmail) els.profileEmail.textContent = "無法讀取登入資訊";
     if (els.profilePermission) els.profilePermission.textContent = error.message;
@@ -1175,6 +1357,20 @@ async function handleGoogleAccountLogin(event) {
   if (!currentProfile) els.googleLoginButton.textContent = "使用 Google 帳戶登入";
 }
 
+function isBookingAuthenticated() {
+  return Boolean(currentProfile && currentProfile.email);
+}
+
+function updateBookingAuthState() {
+  const authenticated = isBookingAuthenticated();
+  if (els.bookingAuthNotice) els.bookingAuthNotice.hidden = authenticated;
+  if (els.submit) {
+    els.submit.disabled = !authenticated;
+    els.submit.setAttribute("aria-disabled", String(!authenticated));
+    els.submit.title = authenticated ? "" : "請先登入公司 Google 帳號";
+  }
+}
+
 function getRequestedAppPage() {
   const pageId = window.location.hash.replace(/^#/, "");
   return APP_PAGE_IDS.includes(pageId) ? pageId : "booking-form";
@@ -1201,6 +1397,7 @@ function showAppPage(pageId, updateHistory = false) {
 function logoutAppAccount() {
   localStorage.removeItem(GOOGLE_LOGIN_STORAGE_KEY);
   currentProfile = null;
+  updateBookingAuthState();
   if (els.profileEmail) els.profileEmail.textContent = "尚未登入公司帳戶";
   if (els.profilePermission) els.profilePermission.textContent = "請按下方按鈕選擇公司 Google 帳戶，再讀取你的借用與權限。";
   if (els.googleLoginButton) {
@@ -1265,6 +1462,8 @@ function escapeHtml(value) {
 els.date.min = todayInTaipei();
 populateTimeOptions(els.deliveryTime);
 populateTimeOptions(els.pickupTime);
+initializeTimeShortcutField("delivery");
+initializeTimeShortcutField("pickup");
 els.todayLabel.textContent = new Intl.DateTimeFormat("zh-TW", {
   year: "numeric",
   month: "long",
@@ -1278,7 +1477,10 @@ els.calendarPrev?.addEventListener("click", () => changeCalendarMonth(-1));
 els.calendarNext?.addEventListener("click", () => changeCalendarMonth(1));
 els.calendarToday?.addEventListener("click", () => { calendarMonth = todayInTaipei().slice(0, 7); calendarSelectedDate = todayInTaipei(); loadCalendarSchedule(); });
 els.calendarGrid?.addEventListener("click", (event) => { const button = event.target.closest("[data-date]"); if (!button) return; calendarSelectedDate = button.dataset.date; renderCalendar(); });
-els.calendarDetail?.addEventListener("click", (event) => { if (event.target.closest("#calendar-start-booking")) startBookingFromCalendar(); });
+els.calendarDetail?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-calendar-instrument-id]");
+  if (button) startBookingFromCalendar(button.dataset.calendarInstrumentId);
+});
 els.hospital.addEventListener("input", renderHospitalSuggestions);
 els.hospital.addEventListener("focus", () => {
   if (els.hospital.value.trim()) renderHospitalSuggestions();
@@ -1344,7 +1546,8 @@ document.addEventListener("keydown", (event) => {
 });
 const supportedBrowser = enforceSupportedBrowser();
 if (supportedBrowser) {
-  populateCalendarInstruments();
+  updateBookingAuthState();
+  populateCalendarCategories();
   renderCalendar();
   showAppPage(getRequestedAppPage());
   configureGoogleAccountLoginLink();
